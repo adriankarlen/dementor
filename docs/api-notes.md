@@ -61,7 +61,7 @@ Entry shape (fields actually used by the dashboard):
 {
   "id": 2260370,
   "title": "string",
-  "text": "string",
+  "text": "string, actually pre-formatted HTML (e.g. <p style=\"...\">...</p>) — render with innerHTML, not escaped text",
   "groupName": "Eken",
   "lastModifiedOn": "den 2 september 2026 klockan 21:44", // pre-formatted Swedish text, not ISO
   "subjectsCoursesDisplayString": "",
@@ -77,10 +77,15 @@ Entry shape (fields actually used by the dashboard):
 }
 ```
 
-`thumbnailUrl`/`fileUrl` are relative, same-origin — the `width`/`height`
-query params on the thumbnail URL can be freely rewritten to request a
-different size (the dashboard does this to get 200×200 instead of the
-default 100×100).
+`thumbnailUrl`/`fileUrl` are relative, same-origin. Point `<img>`/`<video>`
+`src` directly at them (resolved to an absolute URL) — InfoMentor's CSP
+doesn't allow `blob:` URLs in `img-src`, so an earlier version that routed
+thumbnails through `fetch()` + Cache Storage + `createObjectURL` rendered
+as broken images. Letting the browser fetch the real same-origin URL
+natively avoids that entirely, and still benefits from the browser's own
+HTTP cache on repeat views. The `width`/`height` query params on the
+thumbnail URL can be freely rewritten to request a different size (the
+dashboard asks for 200×200 instead of the default 100×100).
 
 `id` appears to be monotonically increasing with recency, so it's used
 for sort order and for detecting "already synced" entries instead of

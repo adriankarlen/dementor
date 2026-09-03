@@ -30,7 +30,6 @@
 
   const DB_NAME = "im-dashboard";
   const DB_VERSION = 2;
-  const MEDIA_CACHE_NAME = "im-media-v1";
 
   const LEARNLOG_PAGE_SIZE = 25;
   const LEARNLOG_MAX_PAGES = 8; // safety cap per sync
@@ -384,25 +383,15 @@
   }
 
   // ------------------------------------------------------------------
-  // Media caching (Cache Storage API — same-origin, no CORS concerns)
+  // Media URLs — same-origin, so <img>/<video> can point at them
+  // directly and let the browser fetch + cache them natively. (An
+  // earlier version routed these through fetch()+Cache Storage+
+  // createObjectURL, but InfoMentor's CSP doesn't allow `blob:` in
+  // img-src, so that rendered as broken images.)
   // ------------------------------------------------------------------
 
-  const objectUrls = new Set();
-
-  async function cachedObjectUrl(relativeUrl) {
-    const absUrl = new URL(relativeUrl, location.origin).href;
-    const cache = await caches.open(MEDIA_CACHE_NAME);
-    let res = await cache.match(absUrl);
-    if (!res) {
-      const fetched = await fetch(absUrl, { credentials: "same-origin" });
-      if (!fetched.ok) return null;
-      await cache.put(absUrl, fetched.clone());
-      res = fetched;
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    objectUrls.add(url);
-    return url;
+  function resolveMediaUrl(relativeUrl) {
+    return new URL(relativeUrl, location.origin).href;
   }
 
   function resizeThumb(url, w, h) {
@@ -414,11 +403,6 @@
     } catch {
       return url;
     }
-  }
-
-  function revokeAllObjectUrls() {
-    for (const url of objectUrls) URL.revokeObjectURL(url);
-    objectUrls.clear();
   }
 
   // ------------------------------------------------------------------
@@ -466,12 +450,13 @@
     .im-pill { background: #ece9fb; color: #4b3f8f; border-radius: 999px; padding: 1px 9px; font-size: 11px; font-weight: 700; }
     .im-new-badge { background: #d81b60; color: #fff; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 700; }
     .im-card h3 { margin: 0 0 6px; font-size: 15px; }
-    .im-card .im-text { white-space: pre-wrap; }
+    .im-card .im-text { }
     .im-media-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .im-media-grid .im-thumb {
       width: 96px; height: 96px; border-radius: 8px; object-fit: cover; cursor: pointer;
       background: #eee;
     }
+    .im-media-grid .im-thumb.im-thumb-broken { object-fit: contain; opacity: .4; }
     .im-empty { text-align: center; color: #777; padding: 60px 20px; }
     .im-empty input { padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; margin: 4px; }
     .im-empty button { padding: 6px 12px; border-radius: 6px; border: none; background: #4b3f8f; color: #fff; cursor: pointer; }
@@ -535,7 +520,6 @@
 
   overlay.querySelector('[data-act="close"]').addEventListener("click", () => {
     overlay.classList.remove("open");
-    revokeAllObjectUrls();
   });
 
   overlay.querySelector('[data-act="sync"]').addEventListener("click", async () => {
@@ -607,7 +591,6 @@
   }
 
   async function renderBody() {
-    revokeAllObjectUrls();
     const body = overlay.querySelector("#im-dash-body");
     body.innerHTML = "";
     if (!activePupil) return;
@@ -635,7 +618,7 @@
           ${e.groupName ? `<span class="im-pill">${escapeHtml(e.groupName)}</span>` : ""}
         </div>
         <h3>${escapeHtml(e.title || "")}</h3>
-        <div class="im-text">${escapeHtml(e.text || "")}</div>
+        <div class="im-text">${e.text || ""}</div>
         <div class="im-media-grid"></div>
       `;
       const grid = card.querySelector(".im-media-grid");
@@ -643,6 +626,8 @@
         const img = document.createElement("img");
         img.className = "im-thumb";
         img.loading = "lazy";
+        img.alt = m.fileType === "Video" ? "Video" : "Photo";
+        img.addEventListener("error", () => img.classList.add("im-thumb-broken"), { once: true });
         lazyLoadThumb(img, resizeThumb(m.thumbnailUrl, 200, 200));
         img.addEventListener("click", () => openLightbox(m));
         grid.appendChild(img);
@@ -787,20 +772,18 @@
   function openLightbox(media) {
     lightbox.innerHTML = "";
     lightbox.classList.add("open");
-    cachedObjectUrl(media.fileUrl).then((url) => {
-      if (!url) return;
-      if (media.fileType === "Video") {
-        const video = document.createElement("video");
-        video.src = url;
-        video.controls = true;
-        video.autoplay = true;
-        lightbox.appendChild(video);
-      } else {
-        const img = document.createElement("img");
-        img.src = url;
-        lightbox.appendChild(img);
-      }
-    });
+    const url = resolveMediaUrl(media.fileUrl);
+    if (media.fileType === "Video") {
+      const video = document.createElement("video");
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      lightbox.appendChild(video);
+    } else {
+      const img = document.createElement("img");
+      img.src = url;
+      lightbox.appendChild(img);
+    }
   }
 
   const thumbObserver = new IntersectionObserver(
@@ -808,11 +791,8 @@
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
         const img = entry.target;
-        const url = img.dataset.imSrc;
         obs.unobserve(img);
-        cachedObjectUrl(url).then((objUrl) => {
-          if (objUrl) img.src = objUrl;
-        });
+        img.src = resolveMediaUrl(img.dataset.imSrc);
       }
     },
     { root: null, rootMargin: "200px" },
