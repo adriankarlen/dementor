@@ -14,32 +14,66 @@ A userscript executes as part of the real `hub.infomentor.se` page, so its
 `SameSite` issues. A separately hosted site trying to call InfoMentor's
 API directly would hit both of those walls.
 
-## Status: Phase 1 — capture / discovery
+## Status: Phase 2 — real dashboard
 
-InfoMentor's actual API endpoints may have changed since any of the old
-reverse-engineering projects were written, and testing requires a real
-BankID-authenticated session I don't have. So step one is a script that
-**only observes** — it logs every network call InfoMentor's own frontend
-makes, without changing anything on the page.
+Phase 1 (a passive network-capture userscript) confirmed the real,
+current API endpoints against a live session, so Phase 2 builds against
+ground truth instead of guessing at old, possibly-stale endpoint names.
+See [`docs/api-notes.md`](docs/api-notes.md) for the confirmed endpoint
+reference.
 
-Once we've seen the real endpoint shapes (Lärlogg entries, calendar,
-newsletter, pupil switching, media URLs), Phase 2 replaces this with the
-actual fetch + render + IndexedDB cache dashboard.
-
-## Install (Phase 1)
+## Install
 
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser
    extension (Chrome, Firefox, Edge all supported).
 2. Open the Tampermonkey dashboard → **Create a new script**.
 3. Delete the placeholder content and paste in the contents of
-   [`src/capture.user.js`](src/capture.user.js).
+   [`src/dashboard.user.js`](src/dashboard.user.js).
 4. Save (`Cmd+S`).
 5. Visit `https://hub.infomentor.se` and log in as usual.
+6. Click the **📋 Dashboard** button, bottom-right, and add each child
+   under the ⚙️ settings screen (see below for how to find their ID).
 
-You should see a small **"🧰 IM Capture"** button in the bottom-right
-corner of the page.
+If you still have `src/capture.user.js` installed from Phase 1, disable
+it — no need to run both at once. Keep the file around; it's handy if
+InfoMentor changes something and we need to re-capture.
+
+## Adding a child
+
+InfoMentor uses more than one ID scheme for the same child. The one
+the dashboard needs is the **pupil switcher ID**:
+
+1. On the real InfoMentor site, click the user/pupil icon top-right.
+2. Right-click a child's name in the dropdown → **Inspect**.
+3. Find the link — it looks like
+   `/Account/PupilSwitcher/SwitchPupil/1234567`. The number at the end
+   is the switch ID.
+4. In the dashboard's ⚙️ settings screen, add the child's name and that
+   ID.
+
+Do this once per child (switch to the other one first so *their* name
+shows up as a clickable link in the dropdown, then repeat).
 
 ## Usage
+
+Hit **🔄 Sync**. The dashboard flips through each configured child
+(using the switch-pupil call), pulls Lärlogg, calendar, newsletters and
+documents for each, and caches everything — including media — in
+IndexedDB / the Cache Storage API. Browsing afterwards is instant and
+doesn't touch InfoMentor's servers again until you sync.
+
+## Capturing more data (only if something breaks or is missing)
+
+If a section stops working or we need to learn a new endpoint, re-enable
+`src/capture.user.js`, click around the relevant part of the real site,
+export the JSON from the 🧰 panel into `captures/`, and run:
+
+```
+node tools/shape.js captures/<file>.json [urlSubstring]
+```
+
+This prints the *structure* of requests/responses (field names, types)
+without echoing personal text, safe to share.
 
 1. Click around the site like you normally would:
    - Open **Lärlogg**, open a single post if that navigates anywhere.
@@ -66,15 +100,22 @@ When sharing findings back for Phase 2, either:
 ## Repo layout
 
 ```
-src/capture.user.js   Phase 1 userscript (network capture + log viewer)
-captures/             Local scratch space for your exported JSON (gitignored)
+src/capture.user.js    Phase 1 userscript (network capture + log viewer)
+src/dashboard.user.js  Phase 2 userscript (the real dashboard)
+tools/shape.js         Dev tool: structural (non-personal) summary of a capture file
+captures/              Local scratch space for exported JSON (gitignored)
+docs/api-notes.md      Confirmed endpoint reference
 ```
 
 ## Roadmap
 
 - [x] Phase 1: capture real endpoint shapes
-- [ ] Phase 2: implement real fetch/parse logic for Lärlogg, calendar, news, pupil switching
-- [ ] Phase 2: IndexedDB schema for entries + media metadata
-- [ ] Phase 2: media caching strategy (thumbnails in IndexedDB, larger media via Cache API)
-- [ ] Phase 2: dashboard UI (per-child tabs, "new" indicators, calendar view)
-- [ ] Phase 2: session-expired detection + re-login prompt
+- [x] Phase 2: fetch/parse logic for Lärlogg, calendar, news, documents, pupil switching
+- [x] Phase 2: IndexedDB schema for entries + media metadata
+- [x] Phase 2: media caching via Cache Storage API, lazy-loaded thumbnails
+- [x] Phase 2: dashboard UI (per-child tabs, section tabs, calendar day-grouping)
+- [x] Phase 2: session-expired detection
+- [ ] "New since last visit" badges per section
+- [ ] Confirm `fileType` values beyond "Image" (video rendering is implemented but unverified)
+- [ ] Learn `learnLogType` filter values (currently hardcoded to `0` / "Alla")
+- [ ] Auto-sync on an interval instead of manual button only
