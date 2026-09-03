@@ -388,21 +388,17 @@
   // earlier version routed these through fetch()+Cache Storage+
   // createObjectURL, but InfoMentor's CSP doesn't allow `blob:` in
   // img-src, so that rendered as broken images.)
+  //
+  // Note: the thumbnail endpoint only serves pre-generated sizes —
+  // whatever width/height InfoMentor's own UI happened to request
+  // (100x100 in our capture) — not arbitrary on-the-fly resizing.
+  // Rewriting width/height to a size it doesn't have returns 200 OK
+  // with an empty body instead of an image, so we use each media
+  // item's thumbnailUrl exactly as given, unmodified.
   // ------------------------------------------------------------------
 
   function resolveMediaUrl(relativeUrl) {
     return new URL(relativeUrl, location.origin).href;
-  }
-
-  function resizeThumb(url, w, h) {
-    try {
-      const u = new URL(url, location.origin);
-      u.searchParams.set("width", w);
-      u.searchParams.set("height", h);
-      return u.pathname + "?" + u.searchParams.toString();
-    } catch {
-      return url;
-    }
   }
 
   // ------------------------------------------------------------------
@@ -628,7 +624,7 @@
         img.loading = "lazy";
         img.alt = m.fileType === "Video" ? "Video" : "Photo";
         img.addEventListener("error", () => img.classList.add("im-thumb-broken"), { once: true });
-        lazyLoadThumb(img, resizeThumb(m.thumbnailUrl, 200, 200));
+        lazyLoadThumb(img, m.thumbnailUrl);
         img.addEventListener("click", () => openLightbox(m));
         grid.appendChild(img);
       }

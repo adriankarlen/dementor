@@ -83,9 +83,16 @@ doesn't allow `blob:` URLs in `img-src`, so an earlier version that routed
 thumbnails through `fetch()` + Cache Storage + `createObjectURL` rendered
 as broken images. Letting the browser fetch the real same-origin URL
 natively avoids that entirely, and still benefits from the browser's own
-HTTP cache on repeat views. The `width`/`height` query params on the
-thumbnail URL can be freely rewritten to request a different size (the
-dashboard asks for 200×200 instead of the default 100×100).
+HTTP cache on repeat views.
+
+**The `width`/`height` query params on the thumbnail URL are NOT freely
+rewritable.** This looked plausible (they're just query params) but
+turned out wrong: requesting a size InfoMentor's own UI never asked for
+(e.g. rewriting `100x100` to `200x200`) returns `200 OK` with an empty
+body — confirmed by opening the rewritten URL directly in a browser tab
+(plain navigation, no script/CSP/cookies involved, still blank). The
+endpoint appears to only serve pre-generated sizes. The dashboard now
+uses each entry's `thumbnailUrl` exactly as returned, unmodified.
 
 `id` appears to be monotonically increasing with recency, so it's used
 for sort order and for detecting "already synced" entries instead of
