@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InfoMentor Dashboard
 // @namespace    infomentor-dashboard
-// @version      0.2.0
+// @version      0.3.0
 // @description  A faster, calmer view of InfoMentor's Lärlogg, calendar and newsletters, cached locally.
 // @match        https://hub.infomentor.se/*
 // @run-at       document-idle
@@ -402,20 +402,24 @@
   }
 
   // ------------------------------------------------------------------
-  // Design tokens
+  // Design tokens — neobrutalism
   //
-  // This is a private daily journal for two kids, not a SaaS product,
-  // so it deliberately avoids generic dashboard chrome: a Nordic/autumn
-  // palette instead of corporate blue-purple, a warm editorial serif
-  // for dates and titles, and one real signature — each child gets a
-  // consistent identity colour (a "spine" + initial badge on every
-  // card) so you always know whose entry you're looking at, even mid-
-  // scroll, without re-reading the header. Fonts are system-only
-  // (Georgia/ui-serif + system sans): loading a web font risks hitting
-  // the same CSP wall that broke the blob: image URLs earlier.
+  // Thick black borders, hard flat-black offset shadows (no blur), flat
+  // saturated fills, square corners by default, and buttons that
+  // visibly press into their shadow on click. Each child keeps a
+  // consistent candy-bright identity colour (used as the Lärlogg
+  // card's border + a tilted sticker badge) so you always know whose
+  // entry you're looking at.
+  //
+  // Fonts are system-only on purpose: the reference kit uses Archivo
+  // Black + Space Grotesk from Google Fonts, but loading an external
+  // font risks the same CSP wall that broke `blob:` image URLs earlier
+  // in this project — a failed @font-face is silent, but not worth
+  // gambling a third time. Heavy-weight system sans gets most of the
+  // same chunky effect.
   // ------------------------------------------------------------------
 
-  const PUPIL_COLORS = ["#D98A34", "#2F6B63", "#6E5AA8", "#A23B49", "#3E7CB1"];
+  const PUPIL_COLORS = ["#FF5FA2", "#4CC9F0", "#FFD93D", "#B8F23C", "#FF7A3D"];
 
   function computePupilColors(pupils) {
     const sorted = [...pupils].sort((a, b) => a.switchId - b.switchId);
@@ -437,15 +441,20 @@
   const style = document.createElement("style");
   style.textContent = `
     #im-dash-btn, #im-dash-overlay, #im-lightbox {
-      --im-ink: #23241d;
-      --im-ink-muted: #6b6d61;
-      --im-linen: #eceee5;
-      --im-surface: #ffffff;
-      --im-hairline: #dfe1d6;
-      --im-moss: #4b5d45;
-      --im-moss-dark: #394630;
-      --im-lingon: #a23b49;
-      --im-font-display: Georgia, "Iowan Old Style", "Palatino Linotype", ui-serif, serif;
+      --im-bg: #fff6e0;
+      --im-ink: #111111;
+      --im-card: #ffffff;
+      --im-yellow: #ffd93d;
+      --im-pink: #ff5fa2;
+      --im-cyan: #4cc9f0;
+      --im-lime: #b8f23c;
+      --im-orange: #ff7a3d;
+      --im-red: #ff4d4d;
+      --im-border-w: 3px;
+      --im-shadow-sm: 3px 3px 0 0 var(--im-ink);
+      --im-shadow-md: 5px 5px 0 0 var(--im-ink);
+      --im-shadow-lg: 8px 8px 0 0 var(--im-ink);
+      --im-font-head: "Arial Black", "Arial Bold", Impact, system-ui, sans-serif;
       --im-font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
@@ -455,145 +464,171 @@
 
     #im-dash-btn {
       position: fixed; bottom: 20px; right: 20px; z-index: 999999;
-      background: var(--im-ink); color: #fff; border: none; border-radius: 999px;
-      padding: 12px 20px 12px 16px; font: 600 13px/1 var(--im-font-body); letter-spacing: .02em;
-      cursor: pointer; display: flex; align-items: center; gap: 8px;
-      box-shadow: 0 8px 24px rgba(35,36,29,.28);
-      transition: transform .15s ease, box-shadow .15s ease;
+      background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: 999px; padding: 12px 20px 12px 16px;
+      font: 900 13px/1 var(--im-font-head); letter-spacing: .02em; text-transform: uppercase;
+      cursor: pointer; display: flex; align-items: center; gap: 9px;
+      box-shadow: var(--im-shadow-md);
+      transition: transform .1s ease, box-shadow .1s ease;
     }
-    #im-dash-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(35,36,29,.34); }
-    #im-dash-btn .im-dot { width: 8px; height: 8px; border-radius: 50%; background: #e8a24a; flex: none; }
+    #im-dash-btn:hover { transform: translate(-2px, -2px); box-shadow: 7px 7px 0 0 var(--im-ink); }
+    #im-dash-btn:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
+    #im-dash-btn .im-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--im-pink); border: 2px solid var(--im-ink); flex: none; }
 
     #im-dash-overlay {
-      position: fixed; inset: 0; z-index: 999997; background: var(--im-linen);
+      position: fixed; inset: 0; z-index: 999997; background: var(--im-bg);
       display: none; flex-direction: column;
       font: 15px/1.55 var(--im-font-body); color: var(--im-ink);
     }
     #im-dash-overlay.open { display: flex; }
 
     #im-dash-header {
-      background: var(--im-surface); border-bottom: 1px solid var(--im-hairline);
-      padding: 14px 22px; display: flex; flex-direction: column; gap: 12px;
+      background: var(--im-card); border-bottom: var(--im-border-w) solid var(--im-ink);
+      padding: 16px 22px; display: flex; flex-direction: column; gap: 14px;
     }
     .im-header-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
     .im-header-row .spacer { flex: 1; }
     #im-dash-header .im-wordmark { display: flex; flex-direction: column; }
-    #im-dash-header h1 { font: 700 20px/1 var(--im-font-display); margin: 0; letter-spacing: -.01em; }
-    #im-dash-header .im-subtitle { font-size: 12px; color: var(--im-ink-muted); margin-top: 3px; }
-    #im-dash-header .status { font-size: 12px; color: var(--im-ink-muted); }
+    #im-dash-header h1 {
+      font: 900 26px/1 var(--im-font-head); margin: 0; letter-spacing: -.01em; text-transform: uppercase;
+      color: var(--im-ink); text-shadow: 3px 3px 0 var(--im-yellow);
+    }
+    #im-dash-header .im-subtitle { font: 700 12px var(--im-font-body); color: var(--im-ink); margin-top: 5px; }
+    #im-dash-header .status { font: 700 12px var(--im-font-body); color: var(--im-ink); }
 
     button.im-btn-primary {
-      background: var(--im-moss); color: #fff; border: none; border-radius: 8px;
-      padding: 8px 16px; cursor: pointer; font: 600 12.5px/1 var(--im-font-body);
-      transition: background .15s ease;
+      background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: 0; padding: 8px 16px; cursor: pointer;
+      font: 800 12.5px/1 var(--im-font-head); text-transform: uppercase; letter-spacing: .03em;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
-    button.im-btn-primary:hover { background: var(--im-moss-dark); }
+    button.im-btn-primary:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
+    button.im-btn-primary:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
+
     button.im-btn-icon {
-      background: transparent; border: 1px solid var(--im-hairline); color: var(--im-ink);
-      border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 15px;
-      display: flex; align-items: center; justify-content: center; transition: background .15s ease;
-    }
-    button.im-btn-icon:hover { background: var(--im-linen); }
-
-    #im-pupil-tabs { display: flex; gap: 8px; }
-    .im-pupil-avatar {
-      width: 38px; height: 38px; border-radius: 50%; border: 2px solid transparent;
+      background: var(--im-card); border: var(--im-border-w) solid var(--im-ink); border-radius: 0;
+      color: var(--im-ink); width: 34px; height: 34px; cursor: pointer; font-size: 15px; font-weight: 900;
       display: flex; align-items: center; justify-content: center;
-      font: 700 14px/1 var(--im-font-display); color: #fff; cursor: pointer;
-      opacity: .55; transition: opacity .15s ease, transform .15s ease;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
-    .im-pupil-avatar:hover { opacity: .85; }
-    .im-pupil-avatar.active { opacity: 1; border-color: var(--im-ink); transform: scale(1.08); }
+    button.im-btn-icon:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
+    button.im-btn-icon:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
 
-    #im-section-tabs { display: flex; gap: 20px; overflow-x: auto; }
-    .im-section-tab {
-      background: none; border: none; border-bottom: 2px solid transparent;
-      color: var(--im-ink-muted); padding: 4px 0; cursor: pointer; white-space: nowrap;
-      font: 600 12.5px/1 var(--im-font-body); text-transform: uppercase; letter-spacing: .06em;
+    #im-pupil-tabs { display: flex; gap: 10px; }
+    .im-pupil-avatar {
+      width: 40px; height: 40px; border-radius: 50%; border: var(--im-border-w) solid var(--im-ink);
+      display: flex; align-items: center; justify-content: center;
+      font: 900 15px/1 var(--im-font-head); color: var(--im-ink); cursor: pointer;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
-    .im-section-tab.active { color: var(--im-ink); border-bottom-color: var(--im-moss); }
+    .im-pupil-avatar:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
+    .im-pupil-avatar.active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
+
+    #im-section-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .im-section-tab {
+      background: var(--im-card); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: 0; padding: 6px 14px; cursor: pointer; white-space: nowrap;
+      font: 800 12px/1 var(--im-font-head); text-transform: uppercase; letter-spacing: .04em;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
+    }
+    .im-section-tab:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
+    .im-section-tab.active { background: var(--im-yellow); transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
 
     #im-dash-body {
-      flex: 1; overflow-y: auto; padding: 28px 22px 70px; max-width: 720px;
+      flex: 1; overflow-y: auto; padding: 34px 22px 80px; max-width: 720px;
       margin: 0 auto; width: 100%; box-sizing: border-box;
     }
 
     .im-card {
-      position: relative; background: var(--im-surface); border-radius: 14px;
-      padding: 20px 22px 20px 30px; margin-bottom: 18px; overflow: visible;
-      box-shadow: 0 1px 2px rgba(35,36,29,.06), 0 8px 20px rgba(35,36,29,.05);
-      border: 1px solid var(--im-hairline);
-      transition: transform .15s ease, box-shadow .15s ease;
-    }
-    .im-card:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(35,36,29,.08), 0 14px 28px rgba(35,36,29,.08); }
-    .im-card-spine {
-      position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
-      background: var(--im-accent, var(--im-moss)); border-radius: 14px 0 0 14px;
+      position: relative; background: var(--im-card);
+      border: 4px solid var(--im-accent, var(--im-ink)); border-radius: 0;
+      padding: 22px 22px 20px; margin: 0 0 34px;
+      box-shadow: var(--im-shadow-lg);
     }
     .im-card-badge {
-      position: absolute; left: 8px; top: 18px; width: 26px; height: 26px; border-radius: 50%;
-      background: var(--im-accent, var(--im-moss)); color: #fff; display: flex; align-items: center;
-      justify-content: center; font: 700 12px/1 var(--im-font-display);
-      box-shadow: 0 2px 5px rgba(35,36,29,.3); border: 2px solid var(--im-linen);
+      position: absolute; top: -17px; left: 20px;
+      background: var(--im-accent, var(--im-yellow)); color: var(--im-ink);
+      border: var(--im-border-w) solid var(--im-ink); border-radius: 0;
+      padding: 3px 12px; font: 900 13px/1 var(--im-font-head);
+      transform: rotate(-5deg); box-shadow: var(--im-shadow-sm);
     }
-    .im-card .im-meta { font-size: 12.5px; color: var(--im-ink-muted); display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-    .im-card .im-date { font-family: var(--im-font-display); }
+    .im-card .im-meta { font: 700 12.5px var(--im-font-body); color: var(--im-ink); display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
     .im-pill {
-      background: var(--im-linen); color: var(--im-ink); border-radius: 999px;
-      padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+      background: var(--im-lime); color: var(--im-ink); border: 2px solid var(--im-ink); border-radius: 0;
+      padding: 2px 10px; font: 800 11px var(--im-font-head); letter-spacing: .02em; text-transform: uppercase;
+      box-shadow: 2px 2px 0 0 var(--im-ink);
     }
-    .im-new-badge { background: var(--im-lingon); color: #fff; border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 700; }
-    .im-card h3 { margin: 0 0 8px; font: 700 17px/1.3 var(--im-font-display); }
-    .im-card .im-text { color: #33342b; }
+    .im-new-badge {
+      background: var(--im-red); color: #fff; border: 2px solid var(--im-ink); border-radius: 0;
+      padding: 2px 9px; font: 800 10px var(--im-font-head); text-transform: uppercase;
+      box-shadow: 2px 2px 0 0 var(--im-ink);
+    }
+    .im-card h3 { margin: 0 0 10px; font: 900 18px/1.25 var(--im-font-head); text-transform: uppercase; letter-spacing: -.01em; }
+    .im-card .im-text { color: var(--im-ink); }
     .im-card .im-text p:first-child { margin-top: 0; }
     .im-card .im-text p:last-child { margin-bottom: 0; }
 
-    .im-media-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .im-media-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
     .im-media-grid .im-thumb {
-      width: 92px; height: 92px; border-radius: 10px; object-fit: cover; cursor: pointer;
-      background: var(--im-linen); border: 1px solid var(--im-hairline);
-      transition: transform .15s ease;
+      width: 92px; height: 92px; border-radius: 0; object-fit: cover; cursor: pointer;
+      background: var(--im-bg); border: var(--im-border-w) solid var(--im-ink);
+      box-shadow: 3px 3px 0 0 var(--im-ink);
+      transition: transform .1s ease, box-shadow .1s ease;
     }
-    .im-media-grid .im-thumb:hover { transform: scale(1.04); }
+    .im-media-grid .im-thumb:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 0 var(--im-ink); }
     .im-media-grid .im-thumb.im-thumb-broken { object-fit: contain; opacity: .4; }
 
     .im-empty {
-      text-align: center; color: var(--im-ink-muted); padding: 70px 20px;
-      font-family: var(--im-font-display); font-size: 15px;
+      text-align: center; color: var(--im-ink); padding: 50px 24px;
+      background: var(--im-card); border: var(--im-border-w) solid var(--im-ink);
+      box-shadow: var(--im-shadow-md); font: 600 14px/1.6 var(--im-font-body);
     }
     .im-empty input {
-      padding: 8px 10px; border-radius: 8px; border: 1px solid var(--im-hairline);
-      margin: 4px; font: 13px var(--im-font-body);
+      padding: 8px 10px; border-radius: 0; border: var(--im-border-w) solid var(--im-ink);
+      margin: 4px; font: 13px var(--im-font-body); background: var(--im-card);
     }
     .im-empty button.im-btn-primary { margin: 4px; }
 
-    .im-day-group { margin-bottom: 20px; }
-    .im-day-group h4 { margin: 0 0 8px; font: 700 13px/1 var(--im-font-body); color: var(--im-ink-muted); text-transform: capitalize; letter-spacing: .02em; }
-    .im-cal-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--im-hairline); }
+    .im-day-group { margin-bottom: 22px; }
+    .im-day-group h4 { margin: 0 0 8px; font: 800 13px/1 var(--im-font-head); color: var(--im-ink); text-transform: uppercase; letter-spacing: .03em; }
+    .im-cal-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 2px solid var(--im-ink); }
     .im-cal-row:first-child { border-top: none; }
-    .im-cal-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .im-cal-dot { width: 12px; height: 12px; border-radius: 0; border: 2px solid var(--im-ink); flex: none; }
 
-    .im-doc-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid var(--im-hairline); }
+    .im-doc-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 2px solid var(--im-ink); }
     .im-doc-row:first-child { border-top: none; }
-    .im-doc-row a { color: var(--im-moss); font-weight: 700; text-decoration: none; }
-    .im-doc-row a:hover { text-decoration: underline; }
+    .im-doc-row a {
+      display: inline-block; background: var(--im-yellow); color: var(--im-ink); border: 2px solid var(--im-ink);
+      border-radius: 0; padding: 5px 12px; font: 800 11px var(--im-font-head); text-transform: uppercase;
+      text-decoration: none; box-shadow: 2px 2px 0 0 var(--im-ink);
+      transition: transform .08s ease, box-shadow .08s ease; flex: none;
+    }
+    .im-doc-row a:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 0 var(--im-ink); }
+    .im-doc-row a:active { transform: translate(2px, 2px); box-shadow: 0 0 0 0 var(--im-ink); }
 
-    .im-settings-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
-    .im-settings-row { display: flex; gap: 10px; align-items: center; font-size: 13.5px; justify-content: space-between; }
-    .im-settings-row button { border: 1px solid var(--im-hairline); background: var(--im-surface); border-radius: 8px; padding: 3px 10px; cursor: pointer; }
+    .im-settings-list { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+    .im-settings-row {
+      display: flex; gap: 10px; align-items: center; font: 700 13.5px var(--im-font-body);
+      justify-content: space-between; border: 2px solid var(--im-ink); padding: 8px 10px;
+    }
+    .im-settings-row button {
+      border: 2px solid var(--im-ink); background: var(--im-card); border-radius: 0;
+      padding: 3px 10px; cursor: pointer; font: 700 11px var(--im-font-body);
+      box-shadow: 2px 2px 0 0 var(--im-ink);
+    }
 
     #im-dash-overlay *:focus-visible, #im-lightbox *:focus-visible {
-      outline: 2px solid var(--im-moss); outline-offset: 2px;
+      outline: 3px solid var(--im-ink); outline-offset: 2px;
     }
 
     @media (max-width: 640px) {
-      #im-dash-body { padding: 20px 14px 70px; }
-      .im-card { padding: 16px 16px 16px 26px; }
+      #im-dash-body { padding: 22px 14px 80px; }
+      .im-card { padding: 18px 16px 16px; }
     }
 
     /* ---- Lightbox / carousel ---- */
     #im-lightbox {
-      position: fixed; inset: 0; background: rgba(20,20,16,.94); z-index: 999999;
+      position: fixed; inset: 0; background: rgba(17,17,17,.94); z-index: 999999;
       display: none; align-items: center; justify-content: center; flex-direction: column;
     }
     #im-lightbox.open { display: flex; }
@@ -602,32 +637,34 @@
     .im-lb-track.dragging { transition: none; }
     .im-lb-slide { flex: 0 0 100%; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
     .im-lb-slide img, .im-lb-slide video {
-      max-width: 100%; max-height: 100%; border-radius: 10px; -webkit-user-drag: none; user-select: none;
-      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+      max-width: 100%; max-height: 100%; border-radius: 0; -webkit-user-drag: none; user-select: none;
+      border: 4px solid #fff; box-shadow: 8px 8px 0 0 rgba(0,0,0,.5);
     }
     .im-lb-nav {
       position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
-      background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%;
-      width: 44px; height: 44px; font-size: 22px; cursor: pointer; line-height: 1;
-      transition: background .15s ease;
+      background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: 0; width: 44px; height: 44px; font-size: 22px; font-weight: 900; cursor: pointer; line-height: 1;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
-    .im-lb-nav:hover { background: rgba(255,255,255,.24); }
+    .im-lb-nav:hover { transform: translateY(-50%) translate(-2px, -2px); box-shadow: 5px 5px 0 0 var(--im-ink); }
+    .im-lb-nav:active { transform: translateY(-50%) translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
     .im-lb-prev { left: 16px; }
     .im-lb-next { right: 16px; }
     .im-lb-close {
       position: absolute; top: 16px; right: 16px; z-index: 2;
-      background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%;
-      width: 36px; height: 36px; font-size: 16px; cursor: pointer; line-height: 1;
-      transition: background .15s ease;
+      background: var(--im-card); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: 0; width: 38px; height: 38px; font-size: 16px; font-weight: 900; cursor: pointer; line-height: 1;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
-    .im-lb-close:hover { background: rgba(255,255,255,.24); }
-    .im-lb-counter { color: rgba(255,255,255,.6); font: 600 12px/1 var(--im-font-body); letter-spacing: .04em; margin: 10px 0 6px; }
-    .im-lb-filmstrip { display: flex; gap: 6px; padding-bottom: 18px; max-width: 90vw; overflow-x: auto; }
+    .im-lb-close:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 0 var(--im-ink); }
+    .im-lb-close:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
+    .im-lb-counter { color: #fff; font: 800 12px/1 var(--im-font-head); letter-spacing: .06em; margin: 12px 0 8px; text-transform: uppercase; }
+    .im-lb-filmstrip { display: flex; gap: 8px; padding-bottom: 20px; max-width: 90vw; overflow-x: auto; }
     .im-lb-film-thumb {
-      width: 48px; height: 48px; border-radius: 8px; object-fit: cover; cursor: pointer;
-      opacity: .45; border: 2px solid transparent; transition: opacity .15s ease;
+      width: 48px; height: 48px; border-radius: 0; object-fit: cover; cursor: pointer;
+      opacity: .55; border: 2px solid #fff; transition: opacity .12s ease, box-shadow .12s ease;
     }
-    .im-lb-film-thumb.active { opacity: 1; border-color: #fff; }
+    .im-lb-film-thumb.active { opacity: 1; border-color: var(--im-yellow); box-shadow: 3px 3px 0 0 rgba(0,0,0,.6); }
   `;
   document.documentElement.appendChild(style);
 
@@ -925,7 +962,7 @@
       return;
     }
     const pupil = await idbGet("pupils", pupilKey);
-    const accent = pupilColors.get(pupilKey) || "#4b5d45";
+    const accent = pupilColors.get(pupilKey) || "#ffd93d";
     const badgeLetter = initials(pupil?.name, pupilKey);
 
     for (const e of entries) {
@@ -933,7 +970,6 @@
       card.className = "im-card";
       card.style.setProperty("--im-accent", accent);
       card.innerHTML = `
-        <div class="im-card-spine"></div>
         <div class="im-card-badge">${escapeHtml(badgeLetter)}</div>
         <div class="im-meta">
           <span class="im-date">${escapeHtml(e.lastModifiedOn || "")}</span>
@@ -1011,9 +1047,8 @@
     for (const n of items) {
       const card = document.createElement("div");
       card.className = "im-card";
-      card.style.setProperty("--im-accent", "#8a8f3d");
+      card.style.setProperty("--im-accent", "#b8f23c");
       card.innerHTML = `
-        <div class="im-card-spine"></div>
         <div class="im-meta">
           <span class="im-date">${escapeHtml(n.publishedDateString || "")}</span>
           ${n.publishedBy ? `<span>· ${escapeHtml(n.publishedBy)}</span>` : ""}
@@ -1035,8 +1070,7 @@
     }
     const wrap = document.createElement("div");
     wrap.className = "im-card";
-    wrap.style.setProperty("--im-accent", "#3e7cb1");
-    wrap.innerHTML = `<div class="im-card-spine"></div>`;
+    wrap.style.setProperty("--im-accent", "#4cc9f0");
     for (const d of items) {
       const row = document.createElement("div");
       row.className = "im-doc-row";
@@ -1057,9 +1091,8 @@
     idbGetAll("pupils").then((pupils) => {
       body.innerHTML = `
         <div class="im-card">
-          <div class="im-card-spine"></div>
           <h3>Manage children</h3>
-          <p style="color:var(--im-ink-muted)">
+          <p style="color:var(--im-ink)">
             Find each child's ID by opening the pupil switcher (top right on the
             real InfoMentor site), right-clicking their name → Inspect, and
             copying the number at the end of the
