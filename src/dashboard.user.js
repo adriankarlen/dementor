@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InfoMentor Dashboard
 // @namespace    infomentor-dashboard
-// @version      0.1.0
+// @version      0.2.0
 // @description  A faster, calmer view of InfoMentor's Lärlogg, calendar and newsletters, cached locally.
 // @match        https://hub.infomentor.se/*
 // @run-at       document-idle
@@ -16,9 +16,9 @@
  * something later).
  *
  * Endpoints below were confirmed from a real capture on 2026-09-03.
- * See README.md for the full endpoint reference and the pupil-ID
- * caveat (InfoMentor uses at least two unrelated ID schemes for the
- * same child — see "Multiple pupils" section).
+ * See docs/api-notes.md for the full endpoint reference and the
+ * pupil-ID caveat (InfoMentor uses at least three unrelated ID
+ * schemes for the same child).
  */
 
 (function () {
@@ -402,112 +402,423 @@
   }
 
   // ------------------------------------------------------------------
-  // UI
+  // Design tokens
+  //
+  // This is a private daily journal for two kids, not a SaaS product,
+  // so it deliberately avoids generic dashboard chrome: a Nordic/autumn
+  // palette instead of corporate blue-purple, a warm editorial serif
+  // for dates and titles, and one real signature — each child gets a
+  // consistent identity colour (a "spine" + initial badge on every
+  // card) so you always know whose entry you're looking at, even mid-
+  // scroll, without re-reading the header. Fonts are system-only
+  // (Georgia/ui-serif + system sans): loading a web font risks hitting
+  // the same CSP wall that broke the blob: image URLs earlier.
+  // ------------------------------------------------------------------
+
+  const PUPIL_COLORS = ["#D98A34", "#2F6B63", "#6E5AA8", "#A23B49", "#3E7CB1"];
+
+  function computePupilColors(pupils) {
+    const sorted = [...pupils].sort((a, b) => a.switchId - b.switchId);
+    const map = new Map();
+    sorted.forEach((p, i) => map.set(p.switchId, PUPIL_COLORS[i % PUPIL_COLORS.length]));
+    return map;
+  }
+
+  function initials(name, switchId) {
+    const trimmed = (name || "").trim();
+    if (trimmed) return trimmed[0].toUpperCase();
+    return String(switchId).slice(-1);
+  }
+
+  // ------------------------------------------------------------------
+  // UI — styles
   // ------------------------------------------------------------------
 
   const style = document.createElement("style");
   style.textContent = `
-    #im-dash-btn {
-      position: fixed; bottom: 16px; right: 16px; z-index: 999999;
-      background: #4b3f8f; color: #fff; border: none; border-radius: 999px;
-      padding: 10px 18px; font: 13px/1.2 system-ui, sans-serif; cursor: pointer;
-      box-shadow: 0 2px 10px rgba(0,0,0,.3);
+    #im-dash-btn, #im-dash-overlay, #im-lightbox {
+      --im-ink: #23241d;
+      --im-ink-muted: #6b6d61;
+      --im-linen: #eceee5;
+      --im-surface: #ffffff;
+      --im-hairline: #dfe1d6;
+      --im-moss: #4b5d45;
+      --im-moss-dark: #394630;
+      --im-lingon: #a23b49;
+      --im-font-display: Georgia, "Iowan Old Style", "Palatino Linotype", ui-serif, serif;
+      --im-font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      #im-dash-overlay *, #im-lightbox * { transition: none !important; animation: none !important; }
+    }
+
+    #im-dash-btn {
+      position: fixed; bottom: 20px; right: 20px; z-index: 999999;
+      background: var(--im-ink); color: #fff; border: none; border-radius: 999px;
+      padding: 12px 20px 12px 16px; font: 600 13px/1 var(--im-font-body); letter-spacing: .02em;
+      cursor: pointer; display: flex; align-items: center; gap: 8px;
+      box-shadow: 0 8px 24px rgba(35,36,29,.28);
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    #im-dash-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(35,36,29,.34); }
+    #im-dash-btn .im-dot { width: 8px; height: 8px; border-radius: 50%; background: #e8a24a; flex: none; }
+
     #im-dash-overlay {
-      position: fixed; inset: 0; z-index: 999997; background: #f4f3fa;
-      display: none; flex-direction: column; font: 14px/1.5 system-ui, sans-serif; color: #232323;
+      position: fixed; inset: 0; z-index: 999997; background: var(--im-linen);
+      display: none; flex-direction: column;
+      font: 15px/1.55 var(--im-font-body); color: var(--im-ink);
     }
     #im-dash-overlay.open { display: flex; }
+
     #im-dash-header {
-      background: #4b3f8f; color: #fff; padding: 10px 16px;
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      background: var(--im-surface); border-bottom: 1px solid var(--im-hairline);
+      padding: 14px 22px; display: flex; flex-direction: column; gap: 12px;
     }
-    #im-dash-header h1 { font-size: 15px; margin: 0; font-weight: 700; }
-    .im-pupil-tab, .im-section-tab {
-      background: #ffffff22; border: 1px solid #ffffff44; color: #fff;
-      border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px;
+    .im-header-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .im-header-row .spacer { flex: 1; }
+    #im-dash-header .im-wordmark { display: flex; flex-direction: column; }
+    #im-dash-header h1 { font: 700 20px/1 var(--im-font-display); margin: 0; letter-spacing: -.01em; }
+    #im-dash-header .im-subtitle { font-size: 12px; color: var(--im-ink-muted); margin-top: 3px; }
+    #im-dash-header .status { font-size: 12px; color: var(--im-ink-muted); }
+
+    button.im-btn-primary {
+      background: var(--im-moss); color: #fff; border: none; border-radius: 8px;
+      padding: 8px 16px; cursor: pointer; font: 600 12.5px/1 var(--im-font-body);
+      transition: background .15s ease;
     }
-    .im-pupil-tab.active, .im-section-tab.active { background: #fff; color: #4b3f8f; font-weight: 700; }
-    #im-dash-header .spacer { flex: 1; }
-    #im-dash-header button.action {
-      background: #ffb703; color: #3a2a00; border: none; border-radius: 8px;
-      padding: 6px 12px; cursor: pointer; font-weight: 700; font-size: 12px;
+    button.im-btn-primary:hover { background: var(--im-moss-dark); }
+    button.im-btn-icon {
+      background: transparent; border: 1px solid var(--im-hairline); color: var(--im-ink);
+      border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 15px;
+      display: flex; align-items: center; justify-content: center; transition: background .15s ease;
     }
-    #im-dash-header .status { font-size: 12px; opacity: .85; }
-    #im-dash-header button.icon {
-      background: transparent; border: none; color: #fff; font-size: 16px; cursor: pointer;
+    button.im-btn-icon:hover { background: var(--im-linen); }
+
+    #im-pupil-tabs { display: flex; gap: 8px; }
+    .im-pupil-avatar {
+      width: 38px; height: 38px; border-radius: 50%; border: 2px solid transparent;
+      display: flex; align-items: center; justify-content: center;
+      font: 700 14px/1 var(--im-font-display); color: #fff; cursor: pointer;
+      opacity: .55; transition: opacity .15s ease, transform .15s ease;
     }
-    #im-dash-body { flex: 1; overflow-y: auto; padding: 20px; max-width: 900px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+    .im-pupil-avatar:hover { opacity: .85; }
+    .im-pupil-avatar.active { opacity: 1; border-color: var(--im-ink); transform: scale(1.08); }
+
+    #im-section-tabs { display: flex; gap: 20px; overflow-x: auto; }
+    .im-section-tab {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--im-ink-muted); padding: 4px 0; cursor: pointer; white-space: nowrap;
+      font: 600 12.5px/1 var(--im-font-body); text-transform: uppercase; letter-spacing: .06em;
+    }
+    .im-section-tab.active { color: var(--im-ink); border-bottom-color: var(--im-moss); }
+
+    #im-dash-body {
+      flex: 1; overflow-y: auto; padding: 28px 22px 70px; max-width: 720px;
+      margin: 0 auto; width: 100%; box-sizing: border-box;
+    }
+
     .im-card {
-      background: #fff; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      position: relative; background: var(--im-surface); border-radius: 14px;
+      padding: 20px 22px 20px 30px; margin-bottom: 18px; overflow: visible;
+      box-shadow: 0 1px 2px rgba(35,36,29,.06), 0 8px 20px rgba(35,36,29,.05);
+      border: 1px solid var(--im-hairline);
+      transition: transform .15s ease, box-shadow .15s ease;
     }
-    .im-card .im-meta { font-size: 12px; color: #7a7a7a; display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
-    .im-pill { background: #ece9fb; color: #4b3f8f; border-radius: 999px; padding: 1px 9px; font-size: 11px; font-weight: 700; }
-    .im-new-badge { background: #d81b60; color: #fff; border-radius: 999px; padding: 1px 8px; font-size: 10px; font-weight: 700; }
-    .im-card h3 { margin: 0 0 6px; font-size: 15px; }
-    .im-card .im-text { }
-    .im-media-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .im-card:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(35,36,29,.08), 0 14px 28px rgba(35,36,29,.08); }
+    .im-card-spine {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+      background: var(--im-accent, var(--im-moss)); border-radius: 14px 0 0 14px;
+    }
+    .im-card-badge {
+      position: absolute; left: 8px; top: 18px; width: 26px; height: 26px; border-radius: 50%;
+      background: var(--im-accent, var(--im-moss)); color: #fff; display: flex; align-items: center;
+      justify-content: center; font: 700 12px/1 var(--im-font-display);
+      box-shadow: 0 2px 5px rgba(35,36,29,.3); border: 2px solid var(--im-linen);
+    }
+    .im-card .im-meta { font-size: 12.5px; color: var(--im-ink-muted); display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .im-card .im-date { font-family: var(--im-font-display); }
+    .im-pill {
+      background: var(--im-linen); color: var(--im-ink); border-radius: 999px;
+      padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    }
+    .im-new-badge { background: var(--im-lingon); color: #fff; border-radius: 999px; padding: 2px 9px; font-size: 10px; font-weight: 700; }
+    .im-card h3 { margin: 0 0 8px; font: 700 17px/1.3 var(--im-font-display); }
+    .im-card .im-text { color: #33342b; }
+    .im-card .im-text p:first-child { margin-top: 0; }
+    .im-card .im-text p:last-child { margin-bottom: 0; }
+
+    .im-media-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
     .im-media-grid .im-thumb {
-      width: 96px; height: 96px; border-radius: 8px; object-fit: cover; cursor: pointer;
-      background: #eee;
+      width: 92px; height: 92px; border-radius: 10px; object-fit: cover; cursor: pointer;
+      background: var(--im-linen); border: 1px solid var(--im-hairline);
+      transition: transform .15s ease;
     }
+    .im-media-grid .im-thumb:hover { transform: scale(1.04); }
     .im-media-grid .im-thumb.im-thumb-broken { object-fit: contain; opacity: .4; }
-    .im-empty { text-align: center; color: #777; padding: 60px 20px; }
-    .im-empty input { padding: 6px 8px; border-radius: 6px; border: 1px solid #ccc; margin: 4px; }
-    .im-empty button { padding: 6px 12px; border-radius: 6px; border: none; background: #4b3f8f; color: #fff; cursor: pointer; }
+
+    .im-empty {
+      text-align: center; color: var(--im-ink-muted); padding: 70px 20px;
+      font-family: var(--im-font-display); font-size: 15px;
+    }
+    .im-empty input {
+      padding: 8px 10px; border-radius: 8px; border: 1px solid var(--im-hairline);
+      margin: 4px; font: 13px var(--im-font-body);
+    }
+    .im-empty button.im-btn-primary { margin: 4px; }
+
+    .im-day-group { margin-bottom: 20px; }
+    .im-day-group h4 { margin: 0 0 8px; font: 700 13px/1 var(--im-font-body); color: var(--im-ink-muted); text-transform: capitalize; letter-spacing: .02em; }
+    .im-cal-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--im-hairline); }
+    .im-cal-row:first-child { border-top: none; }
+    .im-cal-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+
+    .im-doc-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid var(--im-hairline); }
+    .im-doc-row:first-child { border-top: none; }
+    .im-doc-row a { color: var(--im-moss); font-weight: 700; text-decoration: none; }
+    .im-doc-row a:hover { text-decoration: underline; }
+
+    .im-settings-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+    .im-settings-row { display: flex; gap: 10px; align-items: center; font-size: 13.5px; justify-content: space-between; }
+    .im-settings-row button { border: 1px solid var(--im-hairline); background: var(--im-surface); border-radius: 8px; padding: 3px 10px; cursor: pointer; }
+
+    #im-dash-overlay *:focus-visible, #im-lightbox *:focus-visible {
+      outline: 2px solid var(--im-moss); outline-offset: 2px;
+    }
+
+    @media (max-width: 640px) {
+      #im-dash-body { padding: 20px 14px 70px; }
+      .im-card { padding: 16px 16px 16px 26px; }
+    }
+
+    /* ---- Lightbox / carousel ---- */
     #im-lightbox {
-      position: fixed; inset: 0; background: #000d; z-index: 999999;
-      display: none; align-items: center; justify-content: center;
+      position: fixed; inset: 0; background: rgba(20,20,16,.94); z-index: 999999;
+      display: none; align-items: center; justify-content: center; flex-direction: column;
     }
     #im-lightbox.open { display: flex; }
-    #im-lightbox img, #im-lightbox video { max-width: 92vw; max-height: 92vh; border-radius: 8px; }
-    .im-day-group { margin-bottom: 16px; }
-    .im-day-group h4 { margin: 0 0 6px; font-size: 13px; color: #555; text-transform: capitalize; }
-    .im-cal-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #f0f0f0; }
-    .im-cal-row:first-child { border-top: none; }
-    .im-cal-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-    .im-doc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid #f0f0f0; }
-    .im-doc-row:first-child { border-top: none; }
-    .im-doc-row a { color: #4b3f8f; font-weight: 600; text-decoration: none; }
-    .im-settings-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
-    .im-settings-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
-    .im-settings-row button { border: none; background: #eee; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+    .im-lb-stage { position: relative; width: 100%; flex: 1; overflow: hidden; display: flex; touch-action: pan-y; }
+    .im-lb-track { display: flex; width: 100%; height: 100%; transition: transform .32s cubic-bezier(.22,.8,.24,1); }
+    .im-lb-track.dragging { transition: none; }
+    .im-lb-slide { flex: 0 0 100%; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
+    .im-lb-slide img, .im-lb-slide video {
+      max-width: 100%; max-height: 100%; border-radius: 10px; -webkit-user-drag: none; user-select: none;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .im-lb-nav {
+      position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+      background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%;
+      width: 44px; height: 44px; font-size: 22px; cursor: pointer; line-height: 1;
+      transition: background .15s ease;
+    }
+    .im-lb-nav:hover { background: rgba(255,255,255,.24); }
+    .im-lb-prev { left: 16px; }
+    .im-lb-next { right: 16px; }
+    .im-lb-close {
+      position: absolute; top: 16px; right: 16px; z-index: 2;
+      background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%;
+      width: 36px; height: 36px; font-size: 16px; cursor: pointer; line-height: 1;
+      transition: background .15s ease;
+    }
+    .im-lb-close:hover { background: rgba(255,255,255,.24); }
+    .im-lb-counter { color: rgba(255,255,255,.6); font: 600 12px/1 var(--im-font-body); letter-spacing: .04em; margin: 10px 0 6px; }
+    .im-lb-filmstrip { display: flex; gap: 6px; padding-bottom: 18px; max-width: 90vw; overflow-x: auto; }
+    .im-lb-film-thumb {
+      width: 48px; height: 48px; border-radius: 8px; object-fit: cover; cursor: pointer;
+      opacity: .45; border: 2px solid transparent; transition: opacity .15s ease;
+    }
+    .im-lb-film-thumb.active { opacity: 1; border-color: #fff; }
   `;
   document.documentElement.appendChild(style);
 
+  // ------------------------------------------------------------------
+  // UI — floating trigger + overlay shell
+  // ------------------------------------------------------------------
+
   const btn = document.createElement("button");
   btn.id = "im-dash-btn";
-  btn.textContent = "📋 Dashboard";
+  btn.innerHTML = `<span class="im-dot"></span>Dagbok`;
   document.documentElement.appendChild(btn);
 
   const overlay = document.createElement("div");
   overlay.id = "im-dash-overlay";
   overlay.innerHTML = `
     <div id="im-dash-header">
-      <h1>InfoMentor Dashboard</h1>
-      <div id="im-pupil-tabs"></div>
-      <div id="im-section-tabs"></div>
-      <div class="spacer"></div>
-      <span class="status" id="im-status"></span>
-      <button class="action" data-act="sync">🔄 Sync</button>
-      <button class="icon" data-act="settings" title="Manage children">⚙️</button>
-      <button class="icon" data-act="close" title="Close">✕</button>
+      <div class="im-header-row">
+        <div class="im-wordmark">
+          <h1>Dagbok</h1>
+          <span class="im-subtitle" id="im-subtitle"></span>
+        </div>
+        <div class="spacer"></div>
+        <span class="status" id="im-status"></span>
+        <button class="im-btn-primary" data-act="sync">Sync</button>
+        <button class="im-btn-icon" data-act="settings" title="Manage children" aria-label="Manage children">⚙</button>
+        <button class="im-btn-icon" data-act="close" title="Close" aria-label="Close">✕</button>
+      </div>
+      <div class="im-header-row">
+        <div id="im-pupil-tabs"></div>
+        <div id="im-section-tabs"></div>
+      </div>
     </div>
     <div id="im-dash-body"></div>
   `;
   document.documentElement.appendChild(overlay);
 
+  // ------------------------------------------------------------------
+  // UI — lightbox / carousel
+  // ------------------------------------------------------------------
+
   const lightbox = document.createElement("div");
   lightbox.id = "im-lightbox";
+  lightbox.innerHTML = `
+    <button class="im-lb-close" data-act="lb-close" title="Close" aria-label="Close">✕</button>
+    <button class="im-lb-nav im-lb-prev" data-act="lb-prev" title="Previous" aria-label="Previous">‹</button>
+    <div class="im-lb-stage">
+      <div class="im-lb-track"></div>
+    </div>
+    <button class="im-lb-nav im-lb-next" data-act="lb-next" title="Next" aria-label="Next">›</button>
+    <div class="im-lb-counter"></div>
+    <div class="im-lb-filmstrip"></div>
+  `;
   document.documentElement.appendChild(lightbox);
-  lightbox.addEventListener("click", () => {
+
+  const lbStage = lightbox.querySelector(".im-lb-stage");
+  const lbTrack = lightbox.querySelector(".im-lb-track");
+  let lightboxItems = [];
+  let lightboxIndex = 0;
+  let lbDrag = null;
+
+  function openLightbox(items, startIndex) {
+    lightboxItems = items || [];
+    lightboxIndex = startIndex || 0;
+    lbTrack.innerHTML = "";
+    for (const m of lightboxItems) {
+      const slide = document.createElement("div");
+      slide.className = "im-lb-slide";
+      const url = resolveMediaUrl(m.fileUrl);
+      if (m.fileType === "Video") {
+        const video = document.createElement("video");
+        video.src = url;
+        video.controls = true;
+        video.playsInline = true;
+        slide.appendChild(video);
+      } else {
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "";
+        slide.appendChild(img);
+      }
+      lbTrack.appendChild(slide);
+    }
+    renderLightboxFilmstrip();
+    updateLightboxPosition();
+    lightbox.classList.add("open");
+    document.addEventListener("keydown", onLightboxKeydown);
+  }
+
+  function closeLightbox() {
     lightbox.classList.remove("open");
-    lightbox.innerHTML = "";
+    lbTrack.innerHTML = "";
+    document.removeEventListener("keydown", onLightboxKeydown);
+  }
+
+  function lbGoTo(index) {
+    const len = lightboxItems.length;
+    if (len === 0) return;
+    lightboxIndex = ((index % len) + len) % len;
+    updateLightboxPosition();
+  }
+  function lbPrev() {
+    lbGoTo(lightboxIndex - 1);
+  }
+  function lbNext() {
+    lbGoTo(lightboxIndex + 1);
+  }
+
+  function updateLightboxPosition() {
+    lbTrack.style.transform = `translateX(${-lightboxIndex * 100}%)`;
+    lightbox.querySelector(".im-lb-counter").textContent =
+      lightboxItems.length > 1 ? `${lightboxIndex + 1} / ${lightboxItems.length}` : "";
+    lbTrack.querySelectorAll(".im-lb-slide video").forEach((video, i) => {
+      if (i === lightboxIndex) video.play().catch(() => {});
+      else video.pause();
+    });
+    lightbox.querySelectorAll(".im-lb-film-thumb").forEach((el, i) => {
+      el.classList.toggle("active", i === lightboxIndex);
+    });
+    const multi = lightboxItems.length > 1;
+    lightbox.querySelector(".im-lb-prev").style.display = multi ? "" : "none";
+    lightbox.querySelector(".im-lb-next").style.display = multi ? "" : "none";
+  }
+
+  function renderLightboxFilmstrip() {
+    const strip = lightbox.querySelector(".im-lb-filmstrip");
+    strip.innerHTML = "";
+    if (lightboxItems.length <= 1) return;
+    lightboxItems.forEach((m, i) => {
+      const thumb = document.createElement("img");
+      thumb.className = "im-lb-film-thumb";
+      thumb.src = resolveMediaUrl(m.thumbnailUrl || m.fileUrl);
+      thumb.alt = "";
+      thumb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        lbGoTo(i);
+      });
+      strip.appendChild(thumb);
+    });
+  }
+
+  function onLightboxKeydown(ev) {
+    if (ev.key === "Escape") closeLightbox();
+    else if (ev.key === "ArrowLeft") lbPrev();
+    else if (ev.key === "ArrowRight") lbNext();
+  }
+
+  lightbox.querySelector('[data-act="lb-close"]').addEventListener("click", closeLightbox);
+  lightbox.querySelector('[data-act="lb-prev"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    lbPrev();
   });
+  lightbox.querySelector('[data-act="lb-next"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    lbNext();
+  });
+  lightbox.addEventListener("click", (e) => {
+    if (e.target === lightbox) closeLightbox();
+  });
+
+  // Drag / swipe to change slides (mouse, trackpad, and touch via Pointer Events).
+  lbStage.addEventListener("pointerdown", (e) => {
+    if (lightboxItems.length <= 1) return;
+    lbDrag = { startX: e.clientX, width: lbStage.clientWidth };
+    lbTrack.classList.add("dragging");
+    lbStage.setPointerCapture(e.pointerId);
+  });
+  lbStage.addEventListener("pointermove", (e) => {
+    if (!lbDrag) return;
+    const dx = e.clientX - lbDrag.startX;
+    lbTrack.style.transform = `translateX(calc(${-lightboxIndex * 100}% + ${dx}px))`;
+  });
+  function lbEndDrag(e) {
+    if (!lbDrag) return;
+    const dx = e.clientX - lbDrag.startX;
+    const threshold = lbDrag.width * 0.18;
+    lbTrack.classList.remove("dragging");
+    lbDrag = null;
+    if (dx > threshold) lbPrev();
+    else if (dx < -threshold) lbNext();
+    else updateLightboxPosition();
+  }
+  lbStage.addEventListener("pointerup", lbEndDrag);
+  lbStage.addEventListener("pointercancel", lbEndDrag);
+
+  // ------------------------------------------------------------------
+  // UI — state + wiring
+  // ------------------------------------------------------------------
 
   let activePupil = null; // switchId
   let activeSection = "learnlog";
+  let pupilColors = new Map();
 
   btn.addEventListener("click", async () => {
     overlay.classList.add("open");
@@ -541,6 +852,12 @@
 
   async function refreshTabsAndRender() {
     const pupils = await idbGetAll("pupils");
+    pupilColors = computePupilColors(pupils);
+
+    overlay.querySelector("#im-subtitle").textContent = pupils.length
+      ? pupils.map((p) => p.name || `Pupil ${p.switchId}`).join(" & ")
+      : "Add your child to get started";
+
     const pupilTabsEl = overlay.querySelector("#im-pupil-tabs");
     pupilTabsEl.innerHTML = "";
 
@@ -555,8 +872,10 @@
 
     for (const p of pupils) {
       const tab = document.createElement("button");
-      tab.className = "im-pupil-tab" + (p.switchId === activePupil ? " active" : "");
-      tab.textContent = p.name || `Pupil ${p.switchId}`;
+      tab.className = "im-pupil-avatar" + (p.switchId === activePupil ? " active" : "");
+      tab.style.background = pupilColors.get(p.switchId);
+      tab.textContent = initials(p.name, p.switchId);
+      tab.title = p.name || `Pupil ${p.switchId}`;
       tab.addEventListener("click", () => {
         activePupil = p.switchId;
         refreshTabsAndRender();
@@ -602,15 +921,22 @@
       (a, b) => b.id - a.id,
     );
     if (entries.length === 0) {
-      body.innerHTML = `<div class="im-empty">No Lärlogg entries cached yet. Hit 🔄 Sync.</div>`;
+      body.innerHTML = `<div class="im-empty">No Lärlogg entries cached yet. Hit Sync.</div>`;
       return;
     }
+    const pupil = await idbGet("pupils", pupilKey);
+    const accent = pupilColors.get(pupilKey) || "#4b5d45";
+    const badgeLetter = initials(pupil?.name, pupilKey);
+
     for (const e of entries) {
       const card = document.createElement("div");
       card.className = "im-card";
+      card.style.setProperty("--im-accent", accent);
       card.innerHTML = `
+        <div class="im-card-spine"></div>
+        <div class="im-card-badge">${escapeHtml(badgeLetter)}</div>
         <div class="im-meta">
-          <span>${escapeHtml(e.lastModifiedOn || "")}</span>
+          <span class="im-date">${escapeHtml(e.lastModifiedOn || "")}</span>
           ${e.groupName ? `<span class="im-pill">${escapeHtml(e.groupName)}</span>` : ""}
         </div>
         <h3>${escapeHtml(e.title || "")}</h3>
@@ -618,16 +944,17 @@
         <div class="im-media-grid"></div>
       `;
       const grid = card.querySelector(".im-media-grid");
-      for (const m of e.media || []) {
+      const media = e.media || [];
+      media.forEach((m, idx) => {
         const img = document.createElement("img");
         img.className = "im-thumb";
         img.loading = "lazy";
         img.alt = m.fileType === "Video" ? "Video" : "Photo";
         img.addEventListener("error", () => img.classList.add("im-thumb-broken"), { once: true });
         lazyLoadThumb(img, m.thumbnailUrl);
-        img.addEventListener("click", () => openLightbox(m));
+        img.addEventListener("click", () => openLightbox(media, idx));
         grid.appendChild(img);
-      }
+      });
       body.appendChild(card);
     }
   }
@@ -637,7 +964,7 @@
       a.startDateFull.localeCompare(b.startDateFull),
     );
     if (entries.length === 0) {
-      body.innerHTML = `<div class="im-empty">No calendar entries cached yet. Hit 🔄 Sync.</div>`;
+      body.innerHTML = `<div class="im-empty">No calendar entries cached yet. Hit Sync.</div>`;
       return;
     }
     const typesMeta = await idbGet("meta", `calendarEntryTypes:${pupilKey}`);
@@ -678,15 +1005,17 @@
       b.publishedDate.localeCompare(a.publishedDate),
     );
     if (items.length === 0) {
-      body.innerHTML = `<div class="im-empty">No newsletters cached yet. Hit 🔄 Sync.</div>`;
+      body.innerHTML = `<div class="im-empty">No newsletters cached yet. Hit Sync.</div>`;
       return;
     }
     for (const n of items) {
       const card = document.createElement("div");
       card.className = "im-card";
+      card.style.setProperty("--im-accent", "#8a8f3d");
       card.innerHTML = `
+        <div class="im-card-spine"></div>
         <div class="im-meta">
-          <span>${escapeHtml(n.publishedDateString || "")}</span>
+          <span class="im-date">${escapeHtml(n.publishedDateString || "")}</span>
           ${n.publishedBy ? `<span>· ${escapeHtml(n.publishedBy)}</span>` : ""}
         </div>
         <h3>${escapeHtml(n.title || "")}</h3>
@@ -701,11 +1030,13 @@
       (b.publishedDateString || "").localeCompare(a.publishedDateString || ""),
     );
     if (items.length === 0) {
-      body.innerHTML = `<div class="im-empty">No documents cached yet. Hit 🔄 Sync.</div>`;
+      body.innerHTML = `<div class="im-empty">No documents cached yet. Hit Sync.</div>`;
       return;
     }
     const wrap = document.createElement("div");
     wrap.className = "im-card";
+    wrap.style.setProperty("--im-accent", "#3e7cb1");
+    wrap.innerHTML = `<div class="im-card-spine"></div>`;
     for (const d of items) {
       const row = document.createElement("div");
       row.className = "im-doc-row";
@@ -726,8 +1057,9 @@
     idbGetAll("pupils").then((pupils) => {
       body.innerHTML = `
         <div class="im-card">
+          <div class="im-card-spine"></div>
           <h3>Manage children</h3>
-          <p style="color:#666">
+          <p style="color:var(--im-ink-muted)">
             Find each child's ID by opening the pupil switcher (top right on the
             real InfoMentor site), right-clicking their name → Inspect, and
             copying the number at the end of the
@@ -737,7 +1069,7 @@
           <div>
             <input id="im-new-name" placeholder="Name (e.g. Aston)" />
             <input id="im-new-id" placeholder="Switch ID (e.g. 3887588)" />
-            <button id="im-add-pupil">Add</button>
+            <button class="im-btn-primary" id="im-add-pupil">Add</button>
           </div>
         </div>
       `;
@@ -763,23 +1095,6 @@
         await refreshTabsAndRender();
       });
     });
-  }
-
-  function openLightbox(media) {
-    lightbox.innerHTML = "";
-    lightbox.classList.add("open");
-    const url = resolveMediaUrl(media.fileUrl);
-    if (media.fileType === "Video") {
-      const video = document.createElement("video");
-      video.src = url;
-      video.controls = true;
-      video.autoplay = true;
-      lightbox.appendChild(video);
-    } else {
-      const img = document.createElement("img");
-      img.src = url;
-      lightbox.appendChild(img);
-    }
   }
 
   const thumbObserver = new IntersectionObserver(
@@ -810,5 +1125,5 @@
     return String(s).replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
   }
 
-  console.info("[IM Dashboard] ready — click 📋 Dashboard bottom-right.");
+  console.info("[IM Dashboard] ready — click the Dagbok button, bottom-right.");
 })();
