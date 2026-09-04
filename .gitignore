@@ -1,2 +1,27 @@
+node_modules
 captures/*.json
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite data + WAL/SHM sidecar files (rebuildable cache, not committed)
+/data/
+
+# Env
 .env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*

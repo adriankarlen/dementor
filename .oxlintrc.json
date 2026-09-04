@@ -1,0 +1,12 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	// Pre-existing project code with its own style, not part of the
+	// SvelteKit app (see AGENTS.md) — kept out of the app's lint scope,
+	// same as the ESLint config this replaced.
+	"ignorePatterns": ["userscript/**", "server/**", "tools/**", "docs/**", ".agents/**"],
+	"rules": {
+		// src/lib/index.ts is SvelteKit's conventional (currently empty)
+		// library entrypoint, not dead code.
+		"unicorn/no-empty-file": "off"
+	}
+}
