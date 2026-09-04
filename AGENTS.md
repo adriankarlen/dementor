@@ -32,11 +32,15 @@ Two things exist in this repo so far:
    no phone access, no background sync, and it stops working the moment
    that browser's session expires.
 
-2. **An early, incomplete, unreviewed start on a self-hosted server**
-   (`server/`) — a cookie-jar-based HTTP client, no framework chosen
-   yet. This was started before agreeing on the approach with the human
-   and should **not** be treated as a decided direction. A future
-   session should evaluate whether to keep, adapt, or throw it away.
+2. **An early start on a self-hosted server** (`server/`) — a
+   cookie-jar-based HTTP client with no framework, started before
+   agreeing on the approach. It's since been evaluated (see "Decided
+   architecture" below): `server/lib/cookieJar.js` and `httpClient.js`
+   are being kept and ported into the new SvelteKit server code
+   (translated to TS) as the basis for talking to InfoMentor — solid,
+   dependency-free, framework-agnostic groundwork. The rest of
+   `server/` predates the framework decision and will be rebuilt under
+   SvelteKit's own project structure.
 
 Also in the repo:
 
@@ -66,22 +70,53 @@ earlier pass over-indexed on a zero-dependency server for its own sake;
 that was not requested and shouldn't be repeated. Pick whatever's
 simplest and well-supported.
 
-## Explicit non-decisions (as of this note)
+## Decided architecture
 
-Nothing about the implementation is locked in. All of the following
-should be discussed and decided at the start of the next working
-session, not assumed:
+Decided in the session that started the self-hosted rebuild. Treat
+these as settled unless a future session explicitly revisits them.
 
-- Language/runtime and framework for the backend.
-- Storage (database vs. flat files, etc).
-- Where this runs (local machine, home server/NAS, something else) and
-  how it's reachable from a phone (same network? something more?).
-- Whether to keep, adapt, or discard the `server/` folder's current
-  contents.
-- Whether/how much of the existing userscript's UI, CSS, and rendering
-  logic gets reused for the new frontend.
-- Auth for accessing the dashboard itself (does anyone on the home
-  network get in, or does it need its own login?).
+- **Language/framework**: TypeScript on Node, using **SvelteKit** with
+  `adapter-node` (self-hosted, long-running process — *not*
+  `adapter-vercel`/serverless, whose ephemeral filesystem is
+  incompatible with a local SQLite file or on-disk media cache;
+  confirmed, not assumed).
+- **Storage**: SQLite via Node's built-in **`node:sqlite`** (no extra
+  dependency). Used loosely, closer to a KV/cache store than a
+  normalized schema — one table per section (Lärlogg, calendar, news,
+  documents) holding the synced JSON plus a `synced_at` timestamp, since
+  this is fundamentally a rebuildable cache of InfoMentor's own API
+  responses, not a source of truth. **Media files (photos/videos) live
+  as plain files on disk**, not in the database — that's the part that
+  actually needs to load fast.
+- **UI kit**: [`neobrutalism-svelte`](https://neobrutalism-svelte.flenze.com)
+  (built on `shadcn-svelte` + Tailwind CSS v4), components added
+  individually via the `shadcn-svelte` CLI as needed.
+- **Dashboard auth**: two accounts, one per parent. Hand-rolled —
+  password hashing via Node's built-in **`crypto.scrypt`** (no extra
+  dependency) plus a signed session cookie. No third-party auth
+  library; this only ever needs to serve two people.
+- **InfoMentor credentials**: each parent has their own InfoMentor
+  username/password. Stored **encrypted at rest** (AES-256-GCM via
+  Node's built-in `crypto`, again no extra dependency) in the same
+  SQLite store. Each parent's sync runs under their own stored
+  credentials, not a single shared login.
+- **Hosting**: a small VPS (provider not yet chosen — a separate,
+  later task), reached over HTTPS via a reverse proxy (Caddy, for its
+  automatic certificate handling) on a subdomain of an existing domain.
+  **Tailscale was considered and ruled out**: it needs the client app
+  installed on every device, including the phone, and the target phone
+  is company-managed (MDM), which typically blocks installing VPN
+  profiles/apps. Since the dashboard is internet-facing rather than
+  VPN-gated, its own login (above) is the real security boundary.
+- **Userscript reuse**: `src/dashboard.user.js`'s visual design/CSS may
+  be used for inspiration, but the rendering logic will be rebuilt
+  against a real backend API instead of IndexedDB — not a direct port.
+
+Still open, deliberately deferred rather than decided:
+
+- Which VPS provider, and exact provisioning/deployment steps.
+- Whether both parents' InfoMentor logins actually see both pupils
+  (affects whether per-parent sync is redundant or additive).
 
 ## Hard-won facts about InfoMentor (keep respecting these regardless of stack)
 
@@ -98,12 +133,24 @@ session, not assumed:
   inside a browser page this meant no CORS issues; from a server making
   its own HTTP requests, CORS/CSP mostly don't apply at all, but this
   should be reconfirmed once real requests are flowing.
-- The **username/password login flow has not been reverse-engineered or
-  confirmed yet**. An old (~2019) script implementing a password login
-  flow was found during research, but should not be ported blindly —
-  treat its exact steps/field names as unverified and confirm
-  empirically (e.g., fetch the real login page and inspect its actual
-  form fields) rather than guessing from a stale script.
+- The username/password login flow is **fully confirmed** (2026-09-04,
+  verified against a real account via `tools/probe-login.ts`):
+  `hub.infomentor.se` redirects to an auto-submitting relay form that
+  hands an `oauth_token` off to `infomentor.se/swedish/production/mentor/`,
+  which serves a classic ASP.NET WebForms login page. Confirmed field
+  names: `login_ascx$txtNotandanafn` (username), `login_ascx$txtLykilord`
+  (password), `login_ascx$btnLogin` (submit) — plus the usual
+  `__VIEWSTATE`/`__VIEWSTATEGENERATOR`/`__EVENTVALIDATION` hidden fields,
+  which must be scraped fresh per request, not hardcoded. On success,
+  the flow relays **twice** — login lands back on `hub.infomentor.se`,
+  but that page is itself another auto-submit relay (fresh `oauth_token`)
+  back through `infomentor.se`, which finally lands authenticated on
+  `hub.infomentor.se/`. `tools/probe-login.ts` handles this generically
+  by looping on relay-page-detection rather than assuming a fixed hop
+  count, and confirms authentication by successfully calling
+  `communication/communication/appData` afterward. See that file for
+  the full flow notes and `tools/lib/` for the reusable HTTP/cookie/HTML
+  helpers (ported from `server/lib/`) it's built on.
 
 ## Repo layout
 
@@ -112,5 +159,10 @@ src/*.user.js       Working browser userscript (capture tool + dashboard)
 docs/api-notes.md   Confirmed InfoMentor API reference
 tools/shape.js       Capture analysis helper (structure only, no personal data)
 captures/            Gitignored — personal capture exports
-server/              Early, unreviewed, incomplete backend start — not a decided direction
+server/              Early backend start; lib/ (cookie jar, http client) is being
+                     ported into the new SvelteKit app, rest will be rebuilt there
+tools/probe-login.ts Standalone script confirming the InfoMentor login flow;
+                     run locally with real credentials, see file header
+tools/lib/           Ported cookie jar / http client / HTML-scraping helpers
+                     used by tools/probe-login.ts (and, later, the app itself)
 ```
