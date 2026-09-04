@@ -419,7 +419,7 @@
   // same chunky effect.
   // ------------------------------------------------------------------
 
-  const PUPIL_COLORS = ["#FF5FA2", "#4CC9F0", "#FFD93D", "#B8F23C", "#FF7A3D"];
+  const PUPIL_COLORS = ["#C4A1FF", "#AFFEA6", "#FE91E9", "#E7F193", "#FDE047"];
 
   function computePupilColors(pupils) {
     const sorted = [...pupils].sort((a, b) => a.switchId - b.switchId);
@@ -441,19 +441,26 @@
   const style = document.createElement("style");
   style.textContent = `
     #im-dash-btn, #im-dash-overlay, #im-lightbox {
-      --im-bg: #fff6e0;
+      --im-bg: #f9f5f2;
       --im-ink: #111111;
       --im-card: #ffffff;
-      --im-yellow: #ffd93d;
-      --im-pink: #ff5fa2;
-      --im-cyan: #4cc9f0;
-      --im-lime: #b8f23c;
-      --im-orange: #ff7a3d;
+      --im-purple: #c4a1ff;
+      --im-purple-hover: #b488ff;
+      --im-mint: #affea6;
+      --im-pink: #fe91e9;
+      --im-chartreuse: #e7f193;
+      --im-yellow: #fde047;
       --im-red: #ff4d4d;
       --im-border-w: 3px;
-      --im-shadow-sm: 3px 3px 0 0 var(--im-ink);
-      --im-shadow-md: 5px 5px 0 0 var(--im-ink);
-      --im-shadow-lg: 8px 8px 0 0 var(--im-ink);
+      --im-radius: 10px;
+      /* Shadows default to matching the border colour of whatever they're
+         attached to (--im-shadow-color), not a fixed black — e.g. .im-card
+         overrides this to its own --im-accent so a coloured border always
+         gets a matching coloured shadow instead of a mismatched black one. */
+      --im-shadow-color: var(--im-ink);
+      --im-shadow-sm: 3px 3px 0 0 var(--im-shadow-color);
+      --im-shadow-md: 5px 5px 0 0 var(--im-shadow-color);
+      --im-shadow-lg: 8px 8px 0 0 var(--im-shadow-color);
       --im-font-head: "Arial Black", "Arial Bold", Impact, system-ui, sans-serif;
       --im-font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
@@ -464,7 +471,7 @@
 
     #im-dash-btn {
       position: fixed; bottom: 20px; right: 20px; z-index: 999999;
-      background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      background: var(--im-purple); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
       border-radius: 999px; padding: 12px 20px 12px 16px;
       font: 900 13px/1 var(--im-font-head); letter-spacing: .02em; text-transform: uppercase;
       cursor: pointer; display: flex; align-items: center; gap: 9px;
@@ -497,16 +504,16 @@
     #im-dash-header .status { font: 700 12px var(--im-font-body); color: var(--im-ink); }
 
     button.im-btn-primary {
-      background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
-      border-radius: 0; padding: 8px 16px; cursor: pointer;
+      background: var(--im-purple); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
+      border-radius: var(--im-radius); padding: 8px 16px; cursor: pointer;
       font: 800 12.5px/1 var(--im-font-head); text-transform: uppercase; letter-spacing: .03em;
-      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
+      box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease, background .08s ease;
     }
-    button.im-btn-primary:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
+    button.im-btn-primary:hover { background: var(--im-purple-hover); transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
     button.im-btn-primary:active { transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
 
     button.im-btn-icon {
-      background: var(--im-card); border: var(--im-border-w) solid var(--im-ink); border-radius: 0;
+      background: var(--im-card); border: var(--im-border-w) solid var(--im-ink); border-radius: var(--im-radius);
       color: var(--im-ink); width: 34px; height: 34px; cursor: pointer; font-size: 15px; font-weight: 900;
       display: flex; align-items: center; justify-content: center;
       box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
@@ -527,12 +534,12 @@
     #im-section-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
     .im-section-tab {
       background: var(--im-card); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
-      border-radius: 0; padding: 6px 14px; cursor: pointer; white-space: nowrap;
+      border-radius: var(--im-radius); padding: 6px 14px; cursor: pointer; white-space: nowrap;
       font: 800 12px/1 var(--im-font-head); text-transform: uppercase; letter-spacing: .04em;
       box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
     .im-section-tab:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 0 var(--im-ink); }
-    .im-section-tab.active { background: var(--im-yellow); transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
+    .im-section-tab.active { background: var(--im-purple); transform: translate(3px, 3px); box-shadow: 0 0 0 0 var(--im-ink); }
 
     #im-dash-body {
       flex: 1; overflow-y: auto; padding: 34px 22px 80px; max-width: 720px;
@@ -541,25 +548,28 @@
 
     .im-card {
       position: relative; background: var(--im-card);
-      border: 4px solid var(--im-accent, var(--im-ink)); border-radius: 0;
+      border: 4px solid var(--im-accent, var(--im-ink)); border-radius: var(--im-radius);
       padding: 22px 22px 20px; margin: 0 0 34px;
+      /* Shadow colour follows the border colour (--im-accent) instead of
+         always being black, so a coloured card never looks mismatched. */
+      --im-shadow-color: var(--im-accent, var(--im-ink));
       box-shadow: var(--im-shadow-lg);
     }
     .im-card-badge {
       position: absolute; top: -17px; left: 20px;
-      background: var(--im-accent, var(--im-yellow)); color: var(--im-ink);
-      border: var(--im-border-w) solid var(--im-ink); border-radius: 0;
+      background: var(--im-accent, var(--im-purple)); color: var(--im-ink);
+      border: var(--im-border-w) solid var(--im-ink); border-radius: var(--im-radius);
       padding: 3px 12px; font: 900 13px/1 var(--im-font-head);
       transform: rotate(-5deg); box-shadow: var(--im-shadow-sm);
     }
     .im-card .im-meta { font: 700 12.5px var(--im-font-body); color: var(--im-ink); display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
     .im-pill {
-      background: var(--im-lime); color: var(--im-ink); border: 2px solid var(--im-ink); border-radius: 0;
+      background: var(--im-chartreuse); color: var(--im-ink); border: 2px solid var(--im-ink); border-radius: var(--im-radius);
       padding: 2px 10px; font: 800 11px var(--im-font-head); letter-spacing: .02em; text-transform: uppercase;
       box-shadow: 2px 2px 0 0 var(--im-ink);
     }
     .im-new-badge {
-      background: var(--im-red); color: #fff; border: 2px solid var(--im-ink); border-radius: 0;
+      background: var(--im-red); color: #fff; border: 2px solid var(--im-ink); border-radius: var(--im-radius);
       padding: 2px 9px; font: 800 10px var(--im-font-head); text-transform: uppercase;
       box-shadow: 2px 2px 0 0 var(--im-ink);
     }
@@ -570,7 +580,7 @@
 
     .im-media-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
     .im-media-grid .im-thumb {
-      width: 92px; height: 92px; border-radius: 0; object-fit: cover; cursor: pointer;
+      width: 92px; height: 92px; border-radius: var(--im-radius); object-fit: cover; cursor: pointer;
       background: var(--im-bg); border: var(--im-border-w) solid var(--im-ink);
       box-shadow: 3px 3px 0 0 var(--im-ink);
       transition: transform .1s ease, box-shadow .1s ease;
@@ -584,7 +594,7 @@
       box-shadow: var(--im-shadow-md); font: 600 14px/1.6 var(--im-font-body);
     }
     .im-empty input {
-      padding: 8px 10px; border-radius: 0; border: var(--im-border-w) solid var(--im-ink);
+      padding: 8px 10px; border-radius: var(--im-radius); border: var(--im-border-w) solid var(--im-ink);
       margin: 4px; font: 13px var(--im-font-body); background: var(--im-card);
     }
     .im-empty button.im-btn-primary { margin: 4px; }
@@ -593,13 +603,13 @@
     .im-day-group h4 { margin: 0 0 8px; font: 800 13px/1 var(--im-font-head); color: var(--im-ink); text-transform: uppercase; letter-spacing: .03em; }
     .im-cal-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 2px solid var(--im-ink); }
     .im-cal-row:first-child { border-top: none; }
-    .im-cal-dot { width: 12px; height: 12px; border-radius: 0; border: 2px solid var(--im-ink); flex: none; }
+    .im-cal-dot { width: 12px; height: 12px; border-radius: 4px; border: 2px solid var(--im-ink); flex: none; }
 
     .im-doc-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 2px solid var(--im-ink); }
     .im-doc-row:first-child { border-top: none; }
     .im-doc-row a {
       display: inline-block; background: var(--im-yellow); color: var(--im-ink); border: 2px solid var(--im-ink);
-      border-radius: 0; padding: 5px 12px; font: 800 11px var(--im-font-head); text-transform: uppercase;
+      border-radius: var(--im-radius); padding: 5px 12px; font: 800 11px var(--im-font-head); text-transform: uppercase;
       text-decoration: none; box-shadow: 2px 2px 0 0 var(--im-ink);
       transition: transform .08s ease, box-shadow .08s ease; flex: none;
     }
@@ -612,7 +622,7 @@
       justify-content: space-between; border: 2px solid var(--im-ink); padding: 8px 10px;
     }
     .im-settings-row button {
-      border: 2px solid var(--im-ink); background: var(--im-card); border-radius: 0;
+      border: 2px solid var(--im-ink); background: var(--im-card); border-radius: var(--im-radius);
       padding: 3px 10px; cursor: pointer; font: 700 11px var(--im-font-body);
       box-shadow: 2px 2px 0 0 var(--im-ink);
     }
@@ -637,13 +647,13 @@
     .im-lb-track.dragging { transition: none; }
     .im-lb-slide { flex: 0 0 100%; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
     .im-lb-slide img, .im-lb-slide video {
-      max-width: 100%; max-height: 100%; border-radius: 0; -webkit-user-drag: none; user-select: none;
+      max-width: 100%; max-height: 100%; border-radius: var(--im-radius); -webkit-user-drag: none; user-select: none;
       border: 4px solid #fff; box-shadow: 8px 8px 0 0 rgba(0,0,0,.5);
     }
     .im-lb-nav {
       position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
       background: var(--im-yellow); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
-      border-radius: 0; width: 44px; height: 44px; font-size: 22px; font-weight: 900; cursor: pointer; line-height: 1;
+      border-radius: var(--im-radius); width: 44px; height: 44px; font-size: 22px; font-weight: 900; cursor: pointer; line-height: 1;
       box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
     .im-lb-nav:hover { transform: translateY(-50%) translate(-2px, -2px); box-shadow: 5px 5px 0 0 var(--im-ink); }
@@ -653,7 +663,7 @@
     .im-lb-close {
       position: absolute; top: 16px; right: 16px; z-index: 2;
       background: var(--im-card); color: var(--im-ink); border: var(--im-border-w) solid var(--im-ink);
-      border-radius: 0; width: 38px; height: 38px; font-size: 16px; font-weight: 900; cursor: pointer; line-height: 1;
+      border-radius: var(--im-radius); width: 38px; height: 38px; font-size: 16px; font-weight: 900; cursor: pointer; line-height: 1;
       box-shadow: var(--im-shadow-sm); transition: transform .08s ease, box-shadow .08s ease;
     }
     .im-lb-close:hover { transform: translate(-2px, -2px); box-shadow: 5px 5px 0 0 var(--im-ink); }
@@ -661,7 +671,7 @@
     .im-lb-counter { color: #fff; font: 800 12px/1 var(--im-font-head); letter-spacing: .06em; margin: 12px 0 8px; text-transform: uppercase; }
     .im-lb-filmstrip { display: flex; gap: 8px; padding-bottom: 20px; max-width: 90vw; overflow-x: auto; }
     .im-lb-film-thumb {
-      width: 48px; height: 48px; border-radius: 0; object-fit: cover; cursor: pointer;
+      width: 48px; height: 48px; border-radius: 6px; object-fit: cover; cursor: pointer;
       opacity: .55; border: 2px solid #fff; transition: opacity .12s ease, box-shadow .12s ease;
     }
     .im-lb-film-thumb.active { opacity: 1; border-color: var(--im-yellow); box-shadow: 3px 3px 0 0 rgba(0,0,0,.6); }
@@ -1047,7 +1057,7 @@
     for (const n of items) {
       const card = document.createElement("div");
       card.className = "im-card";
-      card.style.setProperty("--im-accent", "#b8f23c");
+      card.style.setProperty("--im-accent", "#affea6");
       card.innerHTML = `
         <div class="im-meta">
           <span class="im-date">${escapeHtml(n.publishedDateString || "")}</span>
@@ -1070,7 +1080,7 @@
     }
     const wrap = document.createElement("div");
     wrap.className = "im-card";
-    wrap.style.setProperty("--im-accent", "#4cc9f0");
+    wrap.style.setProperty("--im-accent", "#c4a1ff");
     for (const d of items) {
       const row = document.createElement("div");
       row.className = "im-doc-row";
