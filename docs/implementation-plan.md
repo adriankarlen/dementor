@@ -34,19 +34,36 @@ new app in a subdirectory instead.
 - **Done when**: `npm run dev` serves an empty SvelteKit page, and a
   throwaway script can open the SQLite file and run a query.
 
-## Phase 1 — dashboard auth (you + your wife)
+## Phase 1 — dashboard auth (you + your wife) ✅
 
-- `users` table: id, display name, password hash (scrypt), salt.
-- `sessions` table: opaque random token, user id, expires_at. Simpler
-  than a signed cookie scheme — the cookie just carries the token,
-  validity is a DB lookup, no JWT/signing library needed.
-- Login form (email/username + password), logout, `hooks.server.ts`
-  redirecting unauthenticated requests to `/login` for everything else.
-- A small one-off CLI script (`tools/create-user.ts`, following the
-  `probe-login.ts` pattern) to create the two accounts — no self-signup
-  UI, this only ever needs two users.
+- `users` table: id, username (UNIQUE COLLATE NOCASE), display_name,
+  password_hash, password_salt, created_at.
+- `sessions` table: opaque random token (256 bits), user_id, expires_at.
+  Simpler than a signed cookie scheme — the cookie just carries the
+  token, validity is a DB lookup, no JWT/signing library needed.
+- Password hashing via Node's built-in `crypto.scrypt` (per-user salt,
+  timing-safe verification).
+- Login form (username + password), logout (POST only — no GET so a
+  stray `<img src>` can't log you out), `hooks.server.ts` redirecting
+  unauthenticated requests to `/login` (with a `?redirect=` param so
+  the post-login redirect lands back on the original page).
+- Open-redirect protection: only same-origin paths accepted as the
+  post-login `redirect=` value; `//evil` and `https://evil` are
+  rejected.
+- `tools/create-user.ts` CLI to create the two accounts, with a
+  `CREATE_USER_UPDATE=1` flag to rotate a password. Interactive (TTY
+  prompts) or non-interactive (env vars). In non-TTY mode the script
+  refuses to silently fall back to prompts and instead errors with the
+  missing env var name.
 - **Done when**: the app is fully login-gated and you and your wife each
   have a working account.
+
+Verified end-to-end against the running dev server: unauthed `/` → 303
+to `/login?redirect=%2F`; successful POST `/login` → 303 with
+`HttpOnly; SameSite=Lax` (and `Secure` in production builds) cookie;
+authenticated GET / → renders greeting; `/logout` POST → cookie
+cleared and session row deleted; expired/tampered tokens rejected and
+their cookies cleared on the next request.
 
 ## Phase 2 — InfoMentor account linking
 

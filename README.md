@@ -10,9 +10,15 @@ for the phased build plan this repo follows.
 
 ## Status
 
+Phase 1 (dashboard auth) — the app is login-gated. Two accounts can
+be provisioned with `pnpm create-user` (or `node tools/create-user.ts`),
+log in via the `/login` form, and stay logged in for 30 days via an
+opaque session token stored in an HttpOnly cookie. Build verified end-
+to-end against both `pnpm dev` and the production `node build` output.
+
 Phase 0 (scaffold) — a SvelteKit app lives at the repo root (`src/`,
 `svelte.config.js`, etc.), built with TypeScript, `adapter-node`, and
-Tailwind CSS v4. No features yet.
+Tailwind CSS v4.
 
 An earlier, working prototype — a Tampermonkey userscript that runs
 directly on `hub.infomentor.se` — still lives in [`userscript/`](userscript/)
@@ -21,12 +27,13 @@ and is being superseded by this app, not deleted; see `AGENTS.md` for why.
 ## App development
 
 ```
-pnpm dev      # start the dev server
-pnpm check    # svelte-check + TypeScript
-pnpm lint     # oxfmt --check + oxlint
-pnpm lint:fix # oxlint --fix
-pnpm format   # oxfmt (write)
-pnpm build    # production build (adapter-node)
+pnpm dev         # start the dev server
+pnpm check       # svelte-check + TypeScript
+pnpm lint        # oxfmt --check + oxlint
+pnpm lint:fix    # oxlint --fix
+pnpm format      # oxfmt (write)
+pnpm build       # production build (adapter-node)
+pnpm create-user # provision a dashboard account (Phase 1)
 ```
 
 ## Repo layout

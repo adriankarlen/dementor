@@ -10,6 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+import { runMigrations } from './auth/schema.ts';
+
 const DEFAULT_PATH = 'data/dementor.sqlite';
 
 function openDatabase(path: string): DatabaseSync {
@@ -19,6 +21,7 @@ function openDatabase(path: string): DatabaseSync {
 	// the "database is locked" errors plain rollback-journal mode gives.
 	database.exec('PRAGMA journal_mode = WAL;');
 	database.exec('PRAGMA foreign_keys = ON;');
+	runMigrations(database);
 	return database;
 }
 
