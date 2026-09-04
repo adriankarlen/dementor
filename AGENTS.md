@@ -24,7 +24,7 @@ InfoMentor's own website — for two kids, on both desktop and phone.
 
 Two things exist in this repo so far:
 
-1. **A working Tampermonkey userscript** (`src/*.user.js`) that runs
+1. **A working Tampermonkey userscript** (`userscript/*.user.js`) that runs
    directly on hub.infomentor.se, riding on the browser's existing login
    session, fetching InfoMentor's internal JSON endpoints and rendering
    a custom dashboard (IndexedDB cache, neobrutalist UI). This works
@@ -108,7 +108,7 @@ these as settled unless a future session explicitly revisits them.
   is company-managed (MDM), which typically blocks installing VPN
   profiles/apps. Since the dashboard is internet-facing rather than
   VPN-gated, its own login (above) is the real security boundary.
-- **Userscript reuse**: `src/dashboard.user.js`'s visual design/CSS may
+- **Userscript reuse**: `userscript/dashboard.user.js`'s visual design/CSS may
   be used for inspiration, but the rendering logic will be rebuilt
   against a real backend API instead of IndexedDB — not a direct port.
 
@@ -155,14 +155,14 @@ Still open, deliberately deferred rather than decided:
 ## Repo layout
 
 ```
-src/*.user.js       Working browser userscript (capture tool + dashboard)
-docs/api-notes.md   Confirmed InfoMentor API reference
-tools/shape.js       Capture analysis helper (structure only, no personal data)
-captures/            Gitignored — personal capture exports
-server/              Early backend start; lib/ (cookie jar, http client) is being
-                     ported into the new SvelteKit app, rest will be rebuilt there
-tools/probe-login.ts Standalone script confirming the InfoMentor login flow;
-                     run locally with real credentials, see file header
-tools/lib/           Ported cookie jar / http client / HTML-scraping helpers
-                     used by tools/probe-login.ts (and, later, the app itself)
+userscript/*.user.js  Working browser userscript (capture tool + dashboard)
+docs/api-notes.md     Confirmed InfoMentor API reference
+tools/shape.js        Capture analysis helper (structure only, no personal data)
+captures/             Gitignored — personal capture exports
+server/               Early backend start; lib/ (cookie jar, http client) is being
+                      ported into the new SvelteKit app, rest will be rebuilt there
+tools/probe-login.ts  Standalone script confirming the InfoMentor login flow;
+                      run locally with real credentials, see file header
+tools/lib/            Ported cookie jar / http client / HTML-scraping helpers
+                      used by tools/probe-login.ts (and, later, the app itself)
 ```

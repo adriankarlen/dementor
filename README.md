@@ -28,13 +28,13 @@ reference.
    extension (Chrome, Firefox, Edge all supported).
 2. Open the Tampermonkey dashboard → **Create a new script**.
 3. Delete the placeholder content and paste in the contents of
-   [`src/dashboard.user.js`](src/dashboard.user.js).
+   [`userscript/dashboard.user.js`](userscript/dashboard.user.js).
 4. Save (`Cmd+S`).
 5. Visit `https://hub.infomentor.se` and log in as usual.
 6. Click the **📋 Dashboard** button, bottom-right, and add each child
    under the ⚙️ settings screen (see below for how to find their ID).
 
-If you still have `src/capture.user.js` installed from Phase 1, disable
+If you still have `userscript/capture.user.js` installed from Phase 1, disable
 it — no need to run both at once. Keep the file around; it's handy if
 InfoMentor changes something and we need to re-capture.
 
@@ -65,7 +65,7 @@ doesn't touch InfoMentor's servers again until you sync.
 ## Capturing more data (only if something breaks or is missing)
 
 If a section stops working or we need to learn a new endpoint, re-enable
-`src/capture.user.js`, click around the relevant part of the real site,
+`userscript/capture.user.js`, click around the relevant part of the real site,
 export the JSON from the 🧰 panel into `captures/`, and run:
 
 ```
@@ -100,8 +100,8 @@ When sharing findings back for Phase 2, either:
 ## Repo layout
 
 ```
-src/capture.user.js    Phase 1 userscript (network capture + log viewer)
-src/dashboard.user.js  Phase 2 userscript (the real dashboard)
+userscript/capture.user.js    Phase 1 userscript (network capture + log viewer)
+userscript/dashboard.user.js  Phase 2 userscript (the real dashboard)
 tools/shape.js         Dev tool: structural (non-personal) summary of a capture file
 captures/              Local scratch space for exported JSON (gitignored)
 docs/api-notes.md      Confirmed endpoint reference
