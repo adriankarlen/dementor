@@ -3,7 +3,14 @@
 // from individual files — keeps the module's internal layout free
 // to change without rippling out.
 export { login, type InfoMentorLoginResult } from './login.ts';
-export { attachSession, getSession, touchSession, dropSession, mapSize } from './session.ts';
+export {
+	attachSession,
+	getSession,
+	touchSession,
+	dropSession,
+	reauthSession,
+	mapSize
+} from './session.ts';
 export { InfoMentorLoginError, InfoMentorSessionExpiredError } from './errors.ts';
 export type { InfoMentorSession } from './types.ts';
 export { createCookieJar, type CookieJar } from './cookieJar.ts';

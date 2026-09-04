@@ -41,3 +41,32 @@ export function dropSession(token: string): void {
 export function mapSize(): number {
 	return map.size;
 }
+
+/**
+ * Re-authenticate an existing dashboard session: run the login dance
+ * again with the same username (taken from the stored entry) but a
+ * fresh password (entered by the parent in the re-auth UI), then swap
+ * in the new cookie jar. Returns the username on success, or
+ * `undefined` if the token doesn't match a live entry (in which case
+ * the caller should drop the cookie and force a full re-login).
+ *
+ * Keeps `loggedInAt`/`lastUsedAt` updated to "now" so the UI can show
+ * a fresh "Inloggad som @user" after the re-auth succeeds.
+ */
+export async function reauthSession(
+	token: string,
+	password: string
+): Promise<{ username: string } | undefined> {
+	const existing = map.get(token);
+	if (!existing) return undefined;
+
+	const { login } = await import('./login.ts');
+	const result = await login(existing.username, password);
+	map.set(token, {
+		username: result.username,
+		cookieJar: result.cookieJar,
+		loggedInAt: new Date(),
+		lastUsedAt: new Date()
+	});
+	return { username: result.username };
+}

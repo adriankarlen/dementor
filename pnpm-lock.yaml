@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      arktype:
+        specifier: ^2.2.3
+        version: 2.2.3
     devDependencies:
       '@fontsource-variable/dm-sans':
         specifier: ^5.3.0
@@ -70,6 +74,12 @@ importers:
         version: 8.2.2(@types/node@24.13.3)(jiti@2.7.0)
 
 packages:
+
+  '@ark/schema@0.56.2':
+    resolution: {integrity: sha512-Qx4D2JFbBWpntiHZaTv7bGG4H/M2rigiknezKg/WVyDSaLdE4YCcWAOoFB7pjjDqHbbV2OqRfntm1nnXvwMexg==}
+
+  '@ark/util@0.56.2':
+    resolution: {integrity: sha512-9kU2sUE38FZEGG7l3hamYMBieLYEJh2L1mrYD2eXpT+78EnQSV1bhjxJhnxGBMSTbtwpBSDNSK+K60WvaI/DTQ==}
 
   '@fontsource-variable/dm-sans@5.3.0':
     resolution: {integrity: sha512-BpUG5bqePiDFMBM4ZtLSlPdAIOM990uB1dlXzIf4aw21yQR7BmykedLXXXMqGWsR18aMLOsbWccwJNh3ztTQaA==}
@@ -800,6 +810,12 @@ packages:
     resolution: {integrity: sha512-Z/ZeOgVl7bcSYZ/u/rh0fOpvEpq//LZmdbkXyc7syVzjPAhfOa9ebsdTSjEBDU4vs5nC98Kfduj1uFo0qyET3g==}
     engines: {node: '>= 0.4'}
 
+  arkregex@0.0.8:
+    resolution: {integrity: sha512-PJcx6G1kQTgLKPUbeYlYecDRaKq15AMSGVajlKFYWlPeJRQL+j3dKE6tyMs40HZ99djS1l9Vhl3ezAHy9JBIqQ==}
+
+  arktype@2.2.3:
+    resolution: {integrity: sha512-7W+0RLTUNJiBFIIZXwOQxSR8Z273IAd6IvqBeG9+gHnQKFsIx2C0iOtGTmMrPnlX4qLXyc5+ll7A0BIj9WrbTg==}
+
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
@@ -1262,6 +1278,12 @@ packages:
 
 snapshots:
 
+  '@ark/schema@0.56.2':
+    dependencies:
+      '@ark/util': 0.56.2
+
+  '@ark/util@0.56.2': {}
+
   '@fontsource-variable/dm-sans@5.3.0': {}
 
   '@fontsource-variable/geist-mono@5.3.0': {}
@@ -1707,6 +1729,16 @@ snapshots:
   acorn@8.18.0: {}
 
   aria-query@5.3.1: {}
+
+  arkregex@0.0.8:
+    dependencies:
+      '@ark/util': 0.56.2
+
+  arktype@2.2.3:
+    dependencies:
+      '@ark/schema': 0.56.2
+      '@ark/util': 0.56.2
+      arkregex: 0.0.8
 
   axobject-query@4.1.0: {}
 

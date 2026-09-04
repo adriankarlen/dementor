@@ -97,7 +97,7 @@ session cookie + dashboard renders greeting with username; logout
 clears the map entry and cookie; wrong creds surface InfoMentor's
 own localized rejection message verbatim.
 
-## Phase 3 — per-section cache + fetch-on-demand
+## Phase 3 — per-section cache + fetch-on-demand ✅
 
 Same SQLite, different lifecycle. The cache is the source of truth
 for what the dashboard renders; InfoMentor is a fetcher that appends

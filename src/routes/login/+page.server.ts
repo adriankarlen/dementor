@@ -16,6 +16,7 @@ import type { Actions, PageServerLoad } from './$types';
 
 import { login as infoMentorLogin, attachSession } from '$lib/server/infomentor';
 import { InfoMentorLoginError } from '$lib/server/infomentor/errors';
+import { refreshPupils } from '$lib/server/sync';
 
 const SESSION_COOKIE = 'session';
 // Anything not a single-leading-slash path is rejected, including
@@ -102,6 +103,16 @@ export const actions: Actions = {
 			// session boundary; re-prompting for the IM password
 			// (Phase 3's re-auth flow) handles that.
 		});
+
+		// Best-effort pupil discovery right after login. A failure
+		// here doesn't fail the login — section pages will trigger
+		// their own refresh later. We log to the server console for
+		// debugging; the user-visible UX stays the same.
+		try {
+			await refreshPupils(infoMentorSession.cookieJar);
+		} catch (err) {
+			console.error('[dementor] pupil discovery after login failed:', err);
+		}
 
 		throw redirect(303, wantedRedirect);
 	}

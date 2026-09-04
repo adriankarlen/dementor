@@ -22,8 +22,14 @@ export interface Session {
 	request(url: string, init?: RequestInit, opts?: { maxRedirects?: number }): Promise<Response>;
 }
 
-export function createSession(): Session {
-	const jar = createCookieJar();
+/**
+ * Create a Session bound to a cookie jar. Pass `initialJar` to reuse an
+ * already-authenticated jar (the typical case for every call after
+ * login); omit it for the login dance, where the jar starts empty and
+ * fills up via Set-Cookie responses.
+ */
+export function createSession(initialJar?: CookieJar): Session {
+	const jar = initialJar ?? createCookieJar();
 
 	/**
 	 * Fetch `url`, following redirects manually and keeping the cookie
