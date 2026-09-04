@@ -91,15 +91,27 @@ these as settled unless a future session explicitly revisits them.
 - **UI kit**: [`neobrutalism-svelte`](https://neobrutalism-svelte.flenze.com)
   (built on `shadcn-svelte` + Tailwind CSS v4), components added
   individually via the `shadcn-svelte` CLI as needed.
-- **Dashboard auth**: two accounts, one per parent. Hand-rolled —
-  password hashing via Node's built-in **`crypto.scrypt`** (no extra
-  dependency) plus a signed session cookie. No third-party auth
-  library; this only ever needs to serve two people.
-- **InfoMentor credentials**: each parent has their own InfoMentor
-  username/password. Stored **encrypted at rest** (AES-256-GCM via
-  Node's built-in `crypto`, again no extra dependency) in the same
-  SQLite store. Each parent's sync runs under their own stored
-  credentials, not a single shared login.
+- **Dashboard auth**: *none.* The InfoMentor login IS the auth —
+  see the next bullet. No `users` table, no `sessions` table, no
+  password hashing, no `pnpm create-user`. The only credential is
+  the parent's InfoMentor password, entered on the dashboard login
+  form.
+- **InfoMentor auth**: each parent enters their InfoMentor
+  username/password on the login form. The dance runs immediately;
+  what persists for the lifetime of the dashboard session is the
+  resulting InfoMentor session cookie, held in process memory only
+  (a module-level `Map<sessionToken, InfoMentorSession>`), keyed by
+  an opaque random session token held as an HttpOnly cookie. No
+  separate dashboard password, no encrypted credential table, no
+  master key. On logout, the in-memory entry is dropped. If
+  InfoMentor's own session expires mid-session, the next call throws
+  a typed error and the UI prompts for the InfoMentor password
+  again. Both parents' fetches go into the same shared on-disk
+  cache, so a parent whose InfoMentor login only sees one pupil
+  still benefits from another parent's fetch covering the other
+  pupil. **No background scheduled sync** — the cache is populated
+  on first nav to each section, on demand, with cached data shown
+  immediately.
 - **Hosting**: a small VPS (provider not yet chosen — a separate,
   later task), reached over HTTPS via a reverse proxy (Caddy, for its
   automatic certificate handling) on a subdomain of an existing domain.
@@ -115,8 +127,6 @@ these as settled unless a future session explicitly revisits them.
 Still open, deliberately deferred rather than decided:
 
 - Which VPS provider, and exact provisioning/deployment steps.
-- Whether both parents' InfoMentor logins actually see both pupils
-  (affects whether per-parent sync is redundant or additive).
 
 ## Hard-won facts about InfoMentor (keep respecting these regardless of stack)
 

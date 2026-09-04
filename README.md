@@ -10,11 +10,15 @@ for the phased build plan this repo follows.
 
 ## Status
 
-Phase 1 (dashboard auth) — the app is login-gated. Two accounts can
-be provisioned with `pnpm create-user` (or `node tools/create-user.ts`),
-log in via the `/login` form, and stay logged in for 30 days via an
-opaque session token stored in an HttpOnly cookie. Build verified end-
-to-end against both `pnpm dev` and the production `node build` output.
+Phase 2 (InfoMentor login, no separate dashboard auth) — the login
+form takes only the InfoMentor username and password. On submit, the
+InfoMentor login dance runs, the resulting cookie jar is held in
+process memory (`src/lib/server/infomentor/session.ts`) keyed by an
+opaque random session token (HttpOnly cookie). Homepage confirms the
+InfoMentor username ("Inloggad på InfoMentor som <username>").
+Logout clears both. Phase 1's dashboard auth was built and then
+deliberately removed — the IM password is the only credential now.
+See `docs/implementation-plan.md` and `AGENTS.md` for the reasoning.
 
 Phase 0 (scaffold) — a SvelteKit app lives at the repo root (`src/`,
 `svelte.config.js`, etc.), built with TypeScript, `adapter-node`, and

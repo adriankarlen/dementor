@@ -4,13 +4,10 @@
 // documents) gets one table holding synced JSON plus a `synced_at`
 // timestamp, since it's a rebuildable cache of InfoMentor's own API
 // responses, not a source of truth. Tables are added phase by phase
-// (users/sessions in Phase 1, credentials in Phase 2, sync cache tables
-// in Phase 3) rather than all up front.
+// (per-section cache tables in Phase 3) rather than all up front.
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-
-import { runMigrations } from './auth/schema.ts';
 
 const DEFAULT_PATH = 'data/dementor.sqlite';
 
@@ -21,7 +18,6 @@ function openDatabase(path: string): DatabaseSync {
 	// the "database is locked" errors plain rollback-journal mode gives.
 	database.exec('PRAGMA journal_mode = WAL;');
 	database.exec('PRAGMA foreign_keys = ON;');
-	runMigrations(database);
 	return database;
 }
 

@@ -9,13 +9,13 @@
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 
 <div class="flex min-h-svh flex-col">
-	{#if data.user}
+	{#if data.infoMentor}
 		<header
 			class="flex items-center justify-between gap-4 border-b-2 border-border bg-background px-4 py-3 sm:px-8"
 		>
 			<a href="/" class="font-sans text-lg font-semibold">dementor</a>
 			<div class="flex items-center gap-3">
-				<span class="text-sm text-muted-foreground">@{data.user.username}</span>
+				<span class="text-sm text-muted-foreground">@{data.infoMentor.username}</span>
 				<form method="POST" action="/logout">
 					<Button type="submit" variant="outline" size="sm">Logga ut</Button>
 				</form>

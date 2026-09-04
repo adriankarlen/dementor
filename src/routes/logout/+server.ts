@@ -1,10 +1,13 @@
-// POST /logout — delete the current session row and clear the cookie,
-// then redirect to /login. POST (not GET) so a stray <img src> or
-// prefetch can't accidentally log someone out.
+// POST /logout — drop the InfoMentor session entry from the
+// in-memory map and clear the session cookie. Then redirect to
+// /login.
+//
+// POST (not GET) so a stray <img src> or prefetch can't accidentally
+// log someone out.
 import { redirect } from '@sveltejs/kit';
-import type { RequestHandler } from './$types.ts';
+import type { RequestHandler } from './$types';
 
-import { dropSession } from '$lib/server/auth/sessions';
+import { dropSession } from '$lib/server/infomentor/session';
 
 const SESSION_COOKIE = 'session';
 

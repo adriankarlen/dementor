@@ -1,42 +1,26 @@
-// Login form action. Verifies the submitted credentials, on success
-// creates a new session row, sets the session cookie, and redirects
-// back to wherever the user was trying to go (or `/` as fallback).
+// Login form action: runs the InfoMentor login dance, attaches the
+// resulting cookie jar to a fresh opaque session token, sets the
+// session cookie, and redirects home (or to the `redirect` query
+// param, same-origin only).
 //
-// Validation is deliberately minimal — username + password both
-// non-empty — because this is an internal app for two people, not a
-// public signup form. The real anti-abuse layer is the rate-limit on
-// InfoMentor's side, not here.
+// There is no separate dashboard user account — InfoMentor creds are
+// the only credentials, per the Phase 2 architectural pivot recorded
+// in AGENTS.md / docs/implementation-plan.md.
 //
-// `redirectTo` is constrained to same-origin paths only: an attacker
-// can craft a /login?redirect=https://evil.example link and rely on
-// the post-login redirect to send a logged-in user off-site. Reject
-// anything that doesn't start with a single `/`.
+// Error reporting: InfoMentor's login failure surfaces their generic
+// localized message ("Inloggning misslyckades…") verbatim — it's
+// the same text InfoMentor shows everyone, not personal data.
 import { dev } from '$app/environment';
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types.ts';
+import type { Actions, PageServerLoad } from './$types';
 
-import { findCredentialsByUsername } from '$lib/server/auth/users';
-import { createSession } from '$lib/server/auth/sessions';
-import { verifyPassword } from '$lib/server/auth/passwords';
+import { login as infoMentorLogin, attachSession } from '$lib/server/infomentor';
+import { InfoMentorLoginError } from '$lib/server/infomentor/errors';
 
 const SESSION_COOKIE = 'session';
 // Anything not a single-leading-slash path is rejected, including
 // `//evil.example` (browsers may treat that as protocol-relative).
 const SAFE_REDIRECT = /^\/(?!\/)/;
-
-// Decode one FormData field into a plain string. Our login form has no
-// file inputs, so any non-string `FormDataEntryValue` is a programming
-// error rather than something to silently coerce. This is the one
-// place we cross the I/O boundary for form data; the action body below
-// only ever sees `string`s, so further narrowing is unneeded.
-function getStringField(form: FormData, name: string): string {
-	const value = form.get(name);
-	if (value === null) return '';
-	if (value instanceof File) {
-		throw new Error(`Form field "${name}" was a File, expected a string`);
-	}
-	return value;
-}
 
 function safeRedirectPath(input: string | null | undefined, fallback: string): string {
 	if (!input) return fallback;
@@ -49,51 +33,74 @@ function safeRedirectPath(input: string | null | undefined, fallback: string): s
 	return fallback;
 }
 
+// Decode one FormData field into a plain string. Our login form has
+// no file inputs, so any non-string `FormDataEntryValue` is a
+// programming error rather than something to silently coerce.
+function getStringField(form: FormData, name: string): string {
+	const value = form.get(name);
+	if (value === null) return '';
+	if (value instanceof File) {
+		throw new Error(`Form field "${name}" was a File, expected a string`);
+	}
+	return value;
+}
+
 export const load: PageServerLoad = ({ locals, url }) => {
-	if (locals.user) throw redirect(303, '/');
+	if (locals.infoMentor) throw redirect(303, '/');
 	return { redirect: url.searchParams.get('redirect') ?? '' };
 };
 
 export const actions: Actions = {
 	default: async ({ request, cookies }) => {
 		const form = await request.formData();
-		const username = getStringField(form, 'username').trim();
-		const password = getStringField(form, 'password');
+		const username = getStringField(form, 'infomentorUsername').trim();
+		const password = getStringField(form, 'infomentorPassword');
 		const wantedRedirect = safeRedirectPath(getStringField(form, 'redirect'), '/');
 
 		if (!username || !password) {
 			return fail(400, {
-				username,
+				infomentorUsername: username,
 				error: 'Användarnamn och lösenord krävs.'
 			});
 		}
 
-		const credentials = findCredentialsByUsername(username);
-		// Run the hash comparison regardless of whether the user was
-		// found, so the response time doesn't leak "this username is
-		// real" vs "this username is fake". With only two accounts on
-		// the system that's academic, but it's free to do and keeps
-		// the timing constant.
-		const dummySalt = '0'.repeat(32);
-		const dummyHash = '0'.repeat(128);
-		const ok = credentials
-			? await verifyPassword(password, credentials.password_salt, credentials.password_hash)
-			: (await verifyPassword(password, dummySalt, dummyHash), false);
-
-		if (!credentials || !ok) {
+		// Run the InfoMentor login dance. Multi-second, multi-relay-page;
+		// the only async boundary in this action.
+		let infoMentorSession;
+		try {
+			infoMentorSession = await infoMentorLogin(username, password);
+		} catch (err) {
+			const detail =
+				err instanceof InfoMentorLoginError
+					? err.message
+					: err instanceof Error
+						? err.message
+						: 'okänt fel';
 			return fail(400, {
-				username,
-				error: 'Fel användarnamn eller lösenord.'
+				infomentorUsername: username,
+				error: `Inloggning misslyckades: ${detail}`
 			});
 		}
 
-		const session = createSession(credentials.id);
-		cookies.set(SESSION_COOKIE, session.token, {
+		// Mint an opaque session token. The token IS the credential —
+		// the cookie just carries it. No JWT, no signing; the server-side
+		// map (`infomentor/session.ts`) is what gives it meaning.
+		const token = crypto.randomUUID();
+		attachSession(token, {
+			username: infoMentorSession.username,
+			cookieJar: infoMentorSession.cookieJar,
+			loggedInAt: new Date(),
+			lastUsedAt: new Date()
+		});
+		cookies.set(SESSION_COOKIE, token, {
 			path: '/',
 			httpOnly: true,
 			sameSite: 'lax',
-			secure: !dev,
-			expires: session.expiresAt
+			secure: !dev
+			// No `expires` — the session lives until logout or server
+			// restart. InfoMentor's own session expiry is the real
+			// session boundary; re-prompting for the IM password
+			// (Phase 3's re-auth flow) handles that.
 		});
 
 		throw redirect(303, wantedRedirect);
