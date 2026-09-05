@@ -87,8 +87,17 @@ export async function login(username: string, password: string): Promise<InfoMen
 	let html = relay.html;
 
 	if (!isLoginPage(html)) {
+		// Structural diagnostics only — hostname/path/status from
+		// InfoMentor's own response, no credentials or personal
+		// content, safe to paste back for debugging. A common cause
+		// here is InfoMentor rate-limiting/blocking repeated login
+		// attempts from the same IP after several failed or rapid
+		// tries, which can serve a different page shape than the
+		// normal login form.
+		const titleMatch = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
 		throw new InfoMentorLoginError(
-			'did not land on the username/password login page — InfoMentor flow may have changed'
+			`did not land on the username/password login page — InfoMentor flow may have changed ` +
+				`(landed on ${response.url}, HTTP ${response.status}, title: ${titleMatch ? JSON.stringify(titleMatch[1].trim()) : 'none'}, ${html.length} bytes)`
 		);
 	}
 

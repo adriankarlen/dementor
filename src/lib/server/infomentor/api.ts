@@ -124,6 +124,9 @@ interface CalendarWindow {
  */
 function checkResponseStatus(response: Response): void {
 	if (response.status === 401 || response.status === 403) {
+		console.warn(
+			`[dementor] ${response.url}: HTTP ${response.status} — treating as InfoMentor session expiry`
+		);
 		throw new InfoMentorSessionExpiredError();
 	}
 }
@@ -141,6 +144,9 @@ function isSessionExpiredHtml(html: string): boolean {
 async function readJsonOrThrowExpired<T>(response: Response): Promise<T> {
 	const text = await response.text();
 	if (isSessionExpiredHtml(text)) {
+		console.warn(
+			`[dementor] ${response.url}: HTTP ${response.status} body looked like a login/relay page (${text.length} bytes) — treating as InfoMentor session expiry`
+		);
 		throw new InfoMentorSessionExpiredError();
 	}
 	try {
@@ -214,9 +220,18 @@ export async function switchPupil(jar: CookieJar, switchId: number): Promise<voi
 	if (!response.ok && response.status !== 302 && response.status !== 303) {
 		throw new Error(`switchPupil(${switchId}) failed with ${response.status}`);
 	}
-	// Drain body so the connection can be reused; the response isn't
-	// JSON anyway so we discard.
-	await response.text();
+	// Drain the body so the connection can be reused. Also check it
+	// for the session-expired HTML shape — a plain GET like this one
+	// can come back 200 OK with the login page's markup instead of a
+	// 401/403 (ASP.NET WebForms convention), which `checkResponseStatus`
+	// alone wouldn't catch.
+	const text = await response.text();
+	if (isSessionExpiredHtml(text)) {
+		console.warn(
+			`[dementor] switchPupil(${switchId}): HTTP ${response.status} body looked like a login/relay page (${text.length} bytes) — treating as InfoMentor session expiry`
+		);
+		throw new InfoMentorSessionExpiredError();
+	}
 }
 
 /**

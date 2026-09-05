@@ -16,6 +16,7 @@ import {
 	parseDocumentRow,
 	parseLearnlogRow,
 	parseMaxIdRow,
+	parseMediaRow,
 	parseNewsRow,
 	parsePupilRow
 } from './sqliteRows.ts';
@@ -24,6 +25,7 @@ import type {
 	CalendarEntryType,
 	DocumentItem,
 	LearnlogEntry,
+	LearnlogMedia,
 	NewsItem
 } from './infomentor/api.ts';
 
@@ -333,4 +335,117 @@ export function listDocuments(): CachedDocument[] {
 			json: JSON.parse(p.json) as DocumentItem
 		};
 	});
+}
+
+// ---- Cached media (Phase 4) ----
+//
+// Local-bytes cache for Lärlogg posts' photo/video files, downloaded
+// during sync so the dashboard can serve them itself rather than
+// hitting hub.infomentor.se for every view. The page reads
+// `listCachedMediaFileIds`, gets back a Set of currently-cached
+// file ids, and renders `<img>/<video src="/media/{fileId}">` for
+// cached entries; uncached ones fall back to InfoMentor's URL.
+
+export interface CachedMedia {
+	fileId: number;
+	fileUrl: string;
+	thumbnailUrl: string;
+	fileExtension: string;
+	fileType: string | null;
+	pupilSwitchId: number | null;
+	entryId: number | null;
+	contentLength: number | null;
+	syncedAt: string;
+}
+
+/**
+ * Record a successfully-downloaded media file. The bytes themselves
+ * live on disk at `<MEDIA_DIR>/<fileId>.<fileExtension>`; this row
+ * is the metadata + provenance record (per the Phase 4 spec in
+ * docs/implementation-plan.md). Idempotent: re-syncing the same
+ * file id updates the timestamp + provenance fields without error.
+ *
+ * `learnLogMedia` is the entry from InfoMentor's JSON; we extract
+ * the fields once here so the caller doesn't have to also pass them.
+ */
+export function upsertMedia(
+	learnLogMedia: LearnlogMedia,
+	contentLength: number,
+	pupilSwitchId: number,
+	entryId: number
+): void {
+	const stmt = db.prepare(`
+		INSERT INTO media (
+			file_id, file_url, thumbnail_url, file_extension, file_type,
+			pupil_switch_id, entry_id, content_length, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_id) DO UPDATE SET
+			file_url = excluded.file_url,
+			thumbnail_url = excluded.thumbnail_url,
+			file_extension = excluded.file_extension,
+			file_type = excluded.file_type,
+			pupil_switch_id = excluded.pupil_switch_id,
+			entry_id = excluded.entry_id,
+			content_length = excluded.content_length,
+			synced_at = excluded.synced_at
+	`);
+	const now = new Date().toISOString();
+	stmt.run(
+		learnLogMedia.fileId,
+		learnLogMedia.fileUrl,
+		learnLogMedia.thumbnailUrl,
+		learnLogMedia.fileExtension,
+		learnLogMedia.fileType,
+		pupilSwitchId,
+		entryId,
+		contentLength,
+		now
+	);
+}
+
+/**
+ * One row by file id. Used by the `/media/[fileId]` route to look up
+ * `file_extension` so it knows both the on-disk path AND can pick a
+ * reasonable Content-Type for the response.
+ */
+export function getCachedMedia(fileId: number): CachedMedia | null {
+	const stmt = db.prepare(
+		`SELECT file_id, file_url, thumbnail_url, file_extension, file_type,
+				pupil_switch_id, entry_id, content_length, synced_at
+		 FROM media
+		 WHERE file_id = ?`
+	);
+	const row = stmt.get(fileId);
+	if (!row) return null;
+	const p = parseMediaRow(row);
+	return {
+		fileId: p.fileId,
+		fileUrl: p.fileUrl,
+		thumbnailUrl: p.thumbnailUrl,
+		fileExtension: p.fileExtension,
+		fileType: p.fileType,
+		pupilSwitchId: p.pupilSwitchId,
+		entryId: p.entryId,
+		contentLength: p.contentLength,
+		syncedAt: p.syncedAt
+	};
+}
+
+/**
+ * All currently-cached media file ids, as a Set for O(1) lookups by
+ * the page render. The page passes a big list of LearnlogEntry
+ * objects; for each one it asks "is each attached media cached?"
+ * and renders accordingly. Cheap: <= a few hundred files for the
+ * scale this dashboard runs at.
+ */
+export function listCachedMediaFileIds(): Set<number> {
+	// SELECT * matches the MediaRowSchema in sqliteRows.ts; if the
+	// schema ever drops a non-nullable column, the parser would
+	// throw on read here — that's the right place for it to surface.
+	const stmt = db.prepare('SELECT * FROM media');
+	const out = new Set<number>();
+	for (const row of stmt.all()) {
+		out.add(parseMediaRow(row).fileId);
+	}
+	return out;
 }

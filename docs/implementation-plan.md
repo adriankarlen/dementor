@@ -166,7 +166,7 @@ parent's.
   logout; a second parent logging in after the first sees their
   own additional pupils and their entries merged in.
 
-## Phase 4 — media caching
+## Phase 4 — media caching ✅
 
 - On cache write of a Lärlogg entry that has media, download each
   new media item's bytes to disk (`media/<fileId>.<ext>`),
@@ -180,6 +180,47 @@ parent's.
   `docs/api-notes.md`).
 - **Done when**: a cached Lärlogg post's photos load from local
   disk, not from InfoMentor, on every view after the first fetch.
+
+Implemented as:
+
+- **Schema** (`src/lib/server/db.ts`): migration v2 adds the
+  `media` table keyed by `file_id`. Carries `file_url`,
+  `thumbnail_url`, `file_extension`, `file_type`, provenance
+  (`pupil_switch_id`/`entry_id`), `content_length`, `synced_at`.
+  Idempotent migration runner picks it up on next process start.
+  `MEDIA_DIR` env-overridable; defaults to `data/media/`.
+- **Downloader** (`src/lib/server/media.ts`): after every
+  `syncLearnlog`, walks the entries fetched THIS run (not the full
+  cache) and downloads any media file-id not already in the cache.
+  Source of bytes is `fileUrl` (full file, not the
+  pre-generated-size thumbnail — per the
+  docs/api-notes.md footgun, rewriting thumbnail widths returns
+  empty 200s). 50 MB hard cap (Content-Length + post-read check)
+  to bound memory + reject accidental tarballs. Per-item failures
+  are logged, not thrown, so one bad media file doesn't fail the
+  whole Lärlogg sync. Session-expired errors DO propagate.
+- **Server route** (`src/routes/media/[fileId]/+server.ts`):
+  requires a dashboard session, looks up `file_extension` from
+  the cache row to compute the on-disk path, returns bytes with
+  `Cache-Control: private, max-age=31536000, immutable` (we never
+  mutate files in place, only re-write identical bytes) and the
+  `Content-Type` from `contentTypeForFileExtension` (jpg/png/gif/
+  webp/heic/bmp + mp4/mov/webm/m4v, octet-stream fallback).
+- **Page render** (`src/routes/larLogg/+page.svelte`): for each
+  Lärlogg entry's media, points `<img>` / `<video>` `src` at
+  `/media/{fileId}` when cached, falls back to InfoMentor's URL
+  (resolved against `hub.infomentor.se`) when not. Click-through
+  (anchor wrapping the element) does the same — cached goes to
+  `/media/{fileId}`, uncached opens the IM file URL in a new tab.
+  Small badge in the corner shows whether each thumb is local
+  (●) or un-cached (↗ InfoMentor). Video items render
+  `<video muted playsinline preload="metadata">` so the still
+  frame shows up as the thumb without autoplaying.
+- **No thumbnail rewriting**: `thumbnailUrl`/`fileUrl` go into
+  the cache row verbatim, are never touched at render time, and
+  the on-disk filename is built solely from
+  `<MEDIA_DIR>/<fileId>.<fileExtension>`. Hard-won constraint
+  respected.
 
 ## Phase 5 — frontend UI
 

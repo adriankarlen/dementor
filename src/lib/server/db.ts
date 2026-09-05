@@ -15,6 +15,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const DEFAULT_PATH = 'data/dementor.sqlite';
+// Default lives next to the SQLite file in data/. Override via env if
+// it's helpful (e.g. the existing SQLite lives on a fast disk but
+// media needs more space elsewhere).
+const DEFAULT_MEDIA_DIR = 'data/media';
 
 function openDatabase(path: string): DatabaseSync {
 	mkdirSync(dirname(resolve(path)), { recursive: true });
@@ -27,6 +31,14 @@ function openDatabase(path: string): DatabaseSync {
 }
 
 export const db = openDatabase(process.env.DATABASE_PATH ?? DEFAULT_PATH);
+
+/**
+ * Where Phase-4-cached media bytes live on disk. Absolute path so
+ * readers/writers agree regardless of process cwd. Directory is
+ * created up front so the first media write doesn't hit ENOENT.
+ */
+export const MEDIA_DIR = resolve(process.env.MEDIA_DIR ?? DEFAULT_MEDIA_DIR);
+mkdirSync(MEDIA_DIR, { recursive: true });
 
 interface Migration {
 	version: number;
@@ -90,6 +102,39 @@ const MIGRATIONS: Migration[] = [
 				ON learnlog_entries (pupil_switch_id, entry_id DESC);`,
 			`CREATE INDEX IF NOT EXISTS idx_calendar_entries_pupil_id
 				ON calendar_entries (pupil_switch_id, entry_id DESC);`
+		]
+	},
+	{
+		version: 2,
+		description: 'Phase 4 — cached media files for Lärlogg posts',
+		statements: [
+			// Per-file-Id cache: file_id is IM's media id (also the
+			// `LearnlogMedia.fileId` field and the URL parameter the
+			// `/media/[fileId]` route is keyed by). Local bytes live at
+			// `<MEDIA_DIR>/<fileId>.<fileExtension>`.
+			//
+			// `file_url`/`thumbnail_url` retained purely as provenance —
+			// they are NOT used to serve anything (`docs/api-notes.md`
+			// explicitly forbids rewriting thumbnail URLs; we never
+			// build local file paths from them either, only from
+			// `file_id` + `file_extension`).
+			//
+			// `pupil_switch_id` + `entry_id` are informational. The
+			// per-section caches are append-only (Phase 3), so media
+			// orphans are rare and the table doesn't currently have
+			// a cleanup rider — we record the parentage for the day
+			// someone wants to add one.
+			`CREATE TABLE IF NOT EXISTS media (
+				file_id INTEGER PRIMARY KEY,
+				file_url TEXT NOT NULL,
+				thumbnail_url TEXT NOT NULL,
+				file_extension TEXT NOT NULL,
+				file_type TEXT,
+				pupil_switch_id INTEGER,
+				entry_id INTEGER,
+				content_length INTEGER,
+				synced_at TEXT NOT NULL
+			);`
 		]
 	}
 ];

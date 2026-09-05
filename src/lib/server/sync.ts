@@ -34,6 +34,7 @@ import {
 import { InfoMentorSessionExpiredError } from './infomentor/errors.ts';
 import {
 	highestLearnlogIdFor,
+	listCachedMediaFileIds,
 	listPupils,
 	replaceDocuments,
 	replaceNewsEntries,
@@ -42,6 +43,8 @@ import {
 	upsertLearnlogEntries,
 	upsertPupil
 } from './cache.ts';
+import { cacheMediaForEntries } from './media.ts';
+import type { LearnlogEntry } from './infomentor/api.ts';
 
 // ---- Per-section sync functions ----
 
@@ -54,14 +57,38 @@ import {
  *
  * `pupilSwitchIds` defaults to every cached pupil; pass a subset to
  * sync just one (used by the per-pupil normal sync below).
+ *
+ * Media caching: phase 4 — downloaded per pupil, immediately
+ * after that pupil's entry pages are upserted, while `switchPupil`
+ * is still pointed at them. InfoMentor's media download endpoint
+ * appears to be scoped to whichever pupil is currently active in
+ * the session (not just the `connectionId` embedded in the media
+ * URL) — downloading media only after the loop over ALL pupils
+ * finished meant every pupil except the last one in the list got a
+ * 401 on their photos, which this code mis-reported as a dead
+ * InfoMentor session (reauth couldn't fix it because the session
+ * was never actually the problem). Per-pupil ordering avoids that
+ * mismatch entirely.
  */
 export async function syncLearnlog(
 	jar: CookieJar,
 	pupilSwitchIds?: number[]
-): Promise<{ pupils: number; newEntries: number; pagesFetched: number }> {
+): Promise<{
+	pupils: number;
+	newEntries: number;
+	pagesFetched: number;
+	media: { attempted: number; downloaded: number; cached: number; failed: number };
+}> {
 	const ids = await resolvePupilIds(jar, pupilSwitchIds);
 	let totalNew = 0;
 	let totalPages = 0;
+	const mediaTotals = { attempted: 0, downloaded: 0, cached: 0, failed: 0 };
+
+	// Snapshot once, then let `cacheMediaForEntries` add to it in place
+	// as files are downloaded — shared across pupils in this run so a
+	// file id repeated across pupils' entries (unlikely, but cheap to
+	// guard) isn't fetched twice.
+	const cachedFileIds = listCachedMediaFileIds();
 
 	for (const switchId of ids) {
 		await switchPupil(jar, switchId);
@@ -74,6 +101,9 @@ export async function syncLearnlog(
 		const MAX_PAGES = 8;
 		const PAGE_SIZE = 10;
 		const previousHighest = highestLearnlogIdFor(switchId);
+		// Entries with media, fetched for THIS pupil this run — media
+		// download happens below, before we move on to the next pupil.
+		const pupilEntriesWithMedia: LearnlogEntry[] = [];
 
 		while (page <= MAX_PAGES) {
 			const batch = await getLearnlogs(jar, page, PAGE_SIZE);
@@ -83,6 +113,9 @@ export async function syncLearnlog(
 			upsertLearnlogEntries(switchId, batch);
 			totalNew += batch.length;
 			totalPages++;
+			for (const entry of batch) {
+				if (entry.media.length > 0) pupilEntriesWithMedia.push(entry);
+			}
 
 			// Stop condition: if the lowest id on this page is <= our
 			// previous high-water mark, every id on this page was
@@ -101,9 +134,24 @@ export async function syncLearnlog(
 			page++;
 		}
 		void pagesForPupil;
+
+		// Download this pupil's new media NOW, while `switchPupil` above
+		// still has them active — see the function-level note on why
+		// this can't wait until after the loop.
+		if (pupilEntriesWithMedia.length > 0) {
+			const media = await cacheMediaForEntries(
+				jar,
+				cachedFileIds,
+				pupilEntriesWithMedia.map((entry) => ({ pupilSwitchId: switchId, entry }))
+			);
+			mediaTotals.attempted += media.attempted;
+			mediaTotals.downloaded += media.downloaded;
+			mediaTotals.cached += media.cached;
+			mediaTotals.failed += media.failed;
+		}
 	}
 
-	return { pupils: ids.length, newEntries: totalNew, pagesFetched: totalPages };
+	return { pupils: ids.length, newEntries: totalNew, pagesFetched: totalPages, media: mediaTotals };
 }
 
 export async function syncCalendar(

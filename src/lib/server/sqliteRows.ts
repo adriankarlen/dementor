@@ -66,6 +66,18 @@ const MaxIdRowSchema = type({
 	max_id: 'number | null'
 });
 
+const MediaRowSchema = type({
+	file_id: 'number',
+	file_url: 'string',
+	thumbnail_url: 'string',
+	file_extension: 'string',
+	file_type: 'string | null',
+	pupil_switch_id: 'number | null',
+	entry_id: 'number | null',
+	content_length: 'number | null',
+	synced_at: 'string'
+});
+
 // ---- Public parsers ----
 
 export interface ParsedPupil {
@@ -155,6 +167,33 @@ export function parseDocumentRow(raw: SqliteRow): ParsedDocument {
 export function parseMaxIdRow(raw: SqliteRow): number | null {
 	const r = unwrap(MaxIdRowSchema(raw), 'max-id row');
 	return r.max_id;
+}
+
+export interface ParsedMedia {
+	fileId: number;
+	fileUrl: string;
+	thumbnailUrl: string;
+	fileExtension: string;
+	fileType: string | null;
+	pupilSwitchId: number | null;
+	entryId: number | null;
+	contentLength: number | null;
+	syncedAt: string;
+}
+
+export function parseMediaRow(raw: SqliteRow): ParsedMedia {
+	const r = unwrap(MediaRowSchema(raw), 'media row');
+	return {
+		fileId: r.file_id,
+		fileUrl: r.file_url,
+		thumbnailUrl: r.thumbnail_url,
+		fileExtension: r.file_extension,
+		fileType: r.file_type,
+		pupilSwitchId: r.pupil_switch_id,
+		entryId: r.entry_id,
+		contentLength: r.content_length,
+		syncedAt: r.synced_at
+	};
 }
 
 // Re-export Type for callers that need to declare a schema locally.
