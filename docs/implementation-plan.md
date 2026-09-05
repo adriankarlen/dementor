@@ -222,7 +222,7 @@ Implemented as:
   `<MEDIA_DIR>/<fileId>.<fileExtension>`. Hard-won constraint
   respected.
 
-## Phase 5 — frontend UI
+## Phase 5 — frontend UI ✅
 
 - Section pages for Lärlogg / Kalender / Nyheter / Documents with
   the "cached data + refreshing indicator" pattern from Phase 3.
@@ -236,6 +236,14 @@ Implemented as:
   inspiration per the earlier decision, not a direct port.
 - **Done when**: you can browse both kids' Lärlogg, calendar, and
   news from a phone browser, end to end, against real fetched data.
+
+Most of this landed incrementally rather than as its own phase:
+the cached+refreshing pattern, `{@html}` rendering, and day-grouped
+calendar were already built in Phase 3; the Lärlogg photo/video
+lightbox (`src/lib/components/media-lightbox.svelte`) was added
+alongside Phase 4's media caching. Accepted as done for now on real
+usage rather than a from-scratch design pass against the userscript—
+further visual polish can happen ad hoc as issues come up in use.
 
 ## Phase 6 — deployment
 
