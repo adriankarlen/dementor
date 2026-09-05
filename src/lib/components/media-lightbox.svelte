@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { isVideoKind, mediaKind } from './media-kind.ts';
+
 	/**
 	 * Full-screen photo/video lightbox with carousel navigation for
 	 * one Lärlogg entry's media array. Uses the native `<dialog>`
@@ -20,6 +22,13 @@
 	 * (`cachedMediaFileIds`) — this component only knows how to
 	 * render whatever URL it's given, same split as `thumbSrc`/
 	 * `fullSrc` on the page itself.
+	 *
+	 * Documents (PDFs, generic file attachments) are filtered out
+	 * of the carousel — they open in a fresh tab from the grid tile
+	 * in `larLogg/+page.svelte` rather than being rendered inline.
+	 * PDF previews don't carousel well with photos/videos, and
+	 * "open the PDF in a new tab" is the better UX (download/print).
+	 * See `media-kind.ts` for the `image | video | document` enum.
 	 */
 	export interface LightboxMediaItem {
 		fileId: number;
@@ -38,24 +47,36 @@
 
 	let { open = $bindable(false), media, index = $bindable(0), resolveSrc }: Props = $props();
 
-	const current = $derived(media[index]);
-
-	function isVideo(fileType: string): boolean {
-		return fileType.toLowerCase() === 'video';
-	}
+	// Carousel-ready subset: photos and videos only. `index` still
+	// refers to the unfiltered `media` array (so callers don't need
+	// to know about the filtering), but `carouselIndex` is the
+	// position within the filtered subset that arrow keys /
+	// prev-next actually move through.
+	const carouselMedia = $derived(media.filter((m) => mediaKind(m.fileType) !== 'document'));
+	const carouselIndex = $derived(
+		// If `index` happens to point at a document (shouldn't, since
+		// the grid never opens the lightbox on a document tile), fall
+		// back to the last carousel item so the dialog still shows
+		// something. Defensive against callers passing an index
+		// outside the carousel subset.
+		carouselMedia.length === 0 ? 0 : Math.max(0, Math.min(index, carouselMedia.length - 1))
+	);
+	const carouselCurrent = $derived(carouselMedia[carouselIndex]);
 
 	function close() {
 		open = false;
 	}
 
 	function goPrev() {
-		if (media.length === 0) return;
-		index = (index - 1 + media.length) % media.length;
+		if (carouselMedia.length === 0) return;
+		const next = (carouselIndex - 1 + carouselMedia.length) % carouselMedia.length;
+		index = media.indexOf(carouselMedia[next]);
 	}
 
 	function goNext() {
-		if (media.length === 0) return;
-		index = (index + 1) % media.length;
+		if (carouselMedia.length === 0) return;
+		const next = (carouselIndex + 1) % carouselMedia.length;
+		index = media.indexOf(carouselMedia[next]);
 	}
 
 	/**
@@ -128,10 +149,12 @@
 	onkeydown={onKeydown}
 	class="lightbox-dialog m-auto h-dvh w-dvw max-w-none overflow-hidden border-0 bg-card p-0 text-foreground sm:h-[88dvh] sm:w-[92vw] sm:max-w-4xl sm:rounded-2xl sm:border-2 sm:border-border sm:shadow-lg"
 >
-	{#if current}
+	{#if carouselCurrent}
 		<div class="flex h-full flex-col">
 			<div class="flex items-center justify-between border-b-2 border-border px-4 py-3">
-				<span class="text-sm text-muted-foreground">{index + 1} / {media.length}</span>
+				<span class="text-sm text-muted-foreground"
+					>{carouselIndex + 1} / {carouselMedia.length}</span
+				>
 				<button
 					type="button"
 					onclick={close}
@@ -150,7 +173,7 @@
 				class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-neutral-900 p-2 sm:p-4"
 				onclick={onStageClick}
 			>
-				{#if media.length > 1}
+				{#if carouselMedia.length > 1}
 					<button
 						type="button"
 						onclick={goPrev}
@@ -161,28 +184,28 @@
 					</button>
 				{/if}
 
-				{#key current.fileId}
-					{#if isVideo(current.fileType)}
+				{#key carouselCurrent.fileId}
+					{#if isVideoKind(mediaKind(carouselCurrent.fileType))}
 						<!-- svelte-ignore a11y_media_has_caption -->
 						<!-- InfoMentor's Lärlogg videos are short parent-recorded
 					     clips with no caption track available from the source
 					     — nothing to point a <track> at. -->
 						<video
-							src={resolveSrc(current.fileId, current.fileUrl)}
+							src={resolveSrc(carouselCurrent.fileId, carouselCurrent.fileUrl)}
 							controls
 							playsinline
 							class="max-h-full max-w-full rounded-md"
 						></video>
 					{:else}
 						<img
-							src={resolveSrc(current.fileId, current.fileUrl)}
+							src={resolveSrc(carouselCurrent.fileId, carouselCurrent.fileUrl)}
 							alt=""
 							class="max-h-full max-w-full rounded-md object-contain"
 						/>
 					{/if}
 				{/key}
 
-				{#if media.length > 1}
+				{#if carouselMedia.length > 1}
 					<button
 						type="button"
 						onclick={goNext}
@@ -194,22 +217,22 @@
 				{/if}
 			</div>
 
-			{#if media.length > 1}
+			{#if carouselMedia.length > 1}
 				<div class="flex min-w-0 gap-2 overflow-x-auto border-t-2 border-border bg-card px-4 py-3">
-					{#each media as m, i (m.fileId)}
+					{#each carouselMedia as m, i (m.fileId)}
 						<button
 							type="button"
-							onclick={() => (index = i)}
+							onclick={() => (index = media.indexOf(m))}
 							aria-label={`Media ${i + 1}`}
-							aria-current={i === index}
-							{@attach scrollActiveIntoView(i === index)}
+							aria-current={i === carouselIndex}
+							{@attach scrollActiveIntoView(i === carouselIndex)}
 							class={`h-14 w-14 flex-none overflow-hidden rounded-md border-2 shadow-xs transition-transform ${
-								i === index
+								i === carouselIndex
 									? 'border-amber-400 shadow-sm'
 									: 'border-border opacity-70 hover:-translate-x-px hover:-translate-y-px hover:opacity-100 hover:shadow-sm'
 							}`}
 						>
-							{#if isVideo(m.fileType)}
+							{#if isVideoKind(mediaKind(m.fileType))}
 								<video
 									src={resolveSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
 									muted

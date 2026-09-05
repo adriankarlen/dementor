@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import LearnlogEntryCard from '$lib/components/learnlog-entry-card.svelte';
+	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 	import ReauthPanel from '$lib/components/reauth-panel.svelte';
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
-	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 
 	let { data } = $props();
 
@@ -64,25 +65,12 @@
 	// each-loop, which runs once per entry × per attachment.
 	const cachedMedia = $derived(new Set(data.cachedMediaFileIds));
 
-	/** Absolute URL for a media item's thumbnail (locally cached
-	 *  variant preferred, otherwise the original InfoMentor URL). */
-	function thumbSrc(fileId: number, fallbackRelative: string): string {
-		if (cachedMedia.has(fileId)) return `/media/${fileId}`;
-		try {
-			return new URL(fallbackRelative, 'https://hub.infomentor.se/').href;
-		} catch {
-			return fallbackRelative;
-		}
-	}
-
-	function isVideo(fileType: string): boolean {
-		return fileType.toLowerCase() === 'video';
-	}
-
 	// Lightbox state: opened per-entry with that entry's full media
 	// array + the clicked index, so prev/next only carousels within
 	// the same post (matching the userscript's per-entry "film strip"
-	// behaviour, not a single feed-wide gallery).
+	// behaviour, not a single feed-wide gallery). Document tiles link
+	// out via <a target="_blank"> instead of triggering this — see
+	// `learnlog-entry-card.svelte` and `media-kind.ts`.
 	let lightboxOpen = $state(false);
 	let lightboxMedia: LightboxMediaItem[] = $state([]);
 	let lightboxIndex = $state(0);
@@ -94,8 +82,8 @@
 	}
 
 	/** Full-resolution src for the lightbox — same cached/fallback
-	 *  split as thumbSrc, just resolving fileUrl instead of
-	 *  thumbnailUrl for the fallback case. */
+	 *  split as the card's thumbnail src, just resolving fileUrl
+	 *  instead of thumbnailUrl for the fallback case. */
 	function fullSrc(fileId: number, fallbackRelative: string): string {
 		// The cached-media record's `file_id` is the key we used to save
 		// the bytes, so the same /media/<fileId> route serves both the
@@ -173,82 +161,7 @@
 	{:else}
 		<ul class="space-y-4">
 			{#each data.entries as entry (entry.pupilSwitchId + ':' + entry.entryId)}
-				<li class="rounded-2xl border-2 border-border bg-card p-5 shadow-md">
-					<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-						<span
-							class="rounded-md border-2 border-border bg-amber-200 px-2 py-0.5 font-semibold text-foreground"
-						>
-							{pupilLabel(entry.pupilSwitchId)}
-						</span>
-						{#if entry.json.groupName}
-							<span class="rounded-md border-2 border-border bg-card px-2 py-0.5 font-semibold">
-								{entry.json.groupName}
-							</span>
-						{/if}
-						<span>{entry.json.lastModifiedOn}</span>
-					</div>
-					<h2 class="mb-2 text-lg font-semibold">{entry.json.title}</h2>
-					<!--
-						infoMentor text is pre-formatted HTML per docs/api-notes.md
-						("actually pre-formatted HTML (e.g. <p style=...>) — render
-						with innerHTML, not escaped text"). Same provenance as
-						news.content.
-					-->
-					<div class="learnlog-text prose prose-sm max-w-none">
-						{@html entry.json.text}
-					</div>
-					{#if entry.json.media.length > 0}
-						<div class="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
-							{#each entry.json.media as m, i (m.fileId)}
-								{@const cached = cachedMedia.has(m.fileId)}
-								<button
-									type="button"
-									onclick={() => openLightbox(entry.json.media, i)}
-									class="group relative block overflow-hidden rounded-md border-2 border-border shadow-xs transition-transform hover:-translate-x-px hover:-translate-y-px hover:shadow-sm"
-									aria-label={isVideo(m.fileType) ? 'Öppna video' : 'Öppna foto'}
-								>
-									{#if isVideo(m.fileType)}
-										<video
-											src={thumbSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-											class="aspect-square w-full bg-muted object-cover"
-											muted
-											playsinline
-											preload="metadata"
-										></video>
-										<span
-											class="pointer-events-none absolute bottom-1 left-1 rounded-sm bg-black/70 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase"
-										>
-											Video
-										</span>
-									{:else}
-										<img
-											src={thumbSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-											alt=""
-											loading="lazy"
-											decoding="async"
-											class="aspect-square w-full bg-muted object-cover"
-										/>
-									{/if}
-									{#if cached}
-										<span
-											class="pointer-events-none absolute top-1 right-1 rounded-sm border border-border bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-foreground shadow-xs"
-											title="Cachas lokalt"
-										>
-											●
-										</span>
-									{:else}
-										<span
-											class="pointer-events-none absolute top-1 right-1 rounded-sm border border-border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-xs"
-											title="Inte cachad ännu — öppnas från InfoMentor i lightboxen"
-										>
-											↗ InfoMentor
-										</span>
-									{/if}
-								</button>
-							{/each}
-						</div>
-					{/if}
-				</li>
+				<LearnlogEntryCard {entry} {cachedMedia} {pupilLabel} onOpenLightbox={openLightbox} />
 			{/each}
 		</ul>
 	{/if}

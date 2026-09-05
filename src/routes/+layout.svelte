@@ -8,6 +8,7 @@
 
 	const sections = [
 		{ href: '/larLogg', label: 'Lärlogg' },
+		{ href: '/manadsbrev', label: 'Månadsbrev' },
 		{ href: '/kalender', label: 'Kalender' },
 		{ href: '/nyheter', label: 'Nyheter' },
 		{ href: '/dokument', label: 'Dokument' },
