@@ -42,6 +42,14 @@ export interface LearnlogMedia {
 	fileUrl: string;
 }
 
+export interface LearnlogAttachment {
+	fileId: number;
+	fileName: string;
+	fileType: string;
+	extension: string;
+	downloadUrl: string;
+}
+
 export interface LearnlogEntry {
 	id: number;
 	title: string;
@@ -50,6 +58,8 @@ export interface LearnlogEntry {
 	lastModifiedOn: string;
 	subjectsCoursesDisplayString: string;
 	media: LearnlogMedia[];
+	// Separate from photo/video media; optional for older cache entries.
+	attachments?: LearnlogAttachment[];
 }
 
 export interface CalendarEntry {

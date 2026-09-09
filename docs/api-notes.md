@@ -65,6 +65,15 @@ Entry shape (fields actually used by the dashboard):
   "groupName": "Eken",
   "lastModifiedOn": "den 2 september 2026 klockan 21:44", // pre-formatted Swedish text, not ISO
   "subjectsCoursesDisplayString": "",
+  "attachments": [
+    {
+      "fileId": 123456,
+      "fileName": "Månadsbrev september.pdf",
+      "fileType": "Document",
+      "extension": "pdf",
+      "downloadUrl": "/Resources/Resource/Download/123456?api=IM2&moduleType=LearnLogAttachment&connectionId=2260370"
+    }
+  ],
   "media": [
     {
       "fileId": 18737925,
@@ -76,6 +85,16 @@ Entry shape (fields actually used by the dashboard):
   ]
 }
 ```
+
+**Attachments are separate from `media`.** Confirmed in the local synced cache:
+Månadsbrev PDFs occur in `attachments` with `fileName`, `extension`, and
+`downloadUrl`, often while `media` is empty. These URLs use
+`moduleType=LearnLogAttachment`, not `LearnLogMedia`; preserve the supplied URL
+and pupil context when downloading. Attachments can also be images, videos, or
+Word documents. Render them as named file links, not thumbnail/lightbox items.
+Some posts identify the monthly letter only in the attachment filename, so the
+`/manadsbrev` view checks both the post title and attachment filenames for
+"månadsbrev" / "manadsbrev". The attachment values above are synthetic examples.
 
 `thumbnailUrl`/`fileUrl` are relative, same-origin. Point `<img>`/`<video>`
 `src` directly at them (resolved to an absolute URL) — InfoMentor's CSP

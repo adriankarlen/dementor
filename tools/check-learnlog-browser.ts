@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
+import type { LearnlogEntry } from '../src/lib/server/infomentor/api.ts';
 
 const directory = await mkdtemp(join(tmpdir(), 'dementor-browser-'));
 process.env.DATABASE_PATH = join(directory, 'cache.sqlite');
@@ -23,6 +24,21 @@ const entries = Array.from({ length: 14 }, (_, i) => ({
 		fileUrl: `/Resources/Resource/Download/${10000 + i * 4 + n}`
 	}))
 }));
+const newsletters: LearnlogEntry[] = [
+	{ ...entries[0], id: 503, title: 'Månadsbrev september', media: [], attachments: [
+		{ fileId: 20001, fileName: 'September.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/20001?api=IM2&moduleType=LearnLogAttachment&connectionId=503' },
+		{ fileId: 20002, fileName: 'Schema.docx', fileType: 'Word processor', extension: 'docx', downloadUrl: '/Resources/Resource/Download/20002?api=IM2&moduleType=LearnLogAttachment&connectionId=503' }
+	] },
+	{ ...entries[0], id: 502, title: 'Information från förskolan', media: [entries[0].media[1]], attachments: [
+		{ fileId: 20003, fileName: 'Förskolan_manadsbrev_oktober_med_ett_långt_filnamn.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/20003?api=IM2&moduleType=LearnLogAttachment&connectionId=502' }
+	] },
+	{ ...entries[0], id: 501, title: 'Utflykt', media: [], attachments: [
+		{ fileId: 20004, fileName: 'Utflykt.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/20004?api=IM2&moduleType=LearnLogAttachment&connectionId=501' }
+	] }
+];
+let showNewsletters = false;
+const pdf = Buffer.from('%PDF-1.4\nsynthetic attachment\n%%EOF');
+const attachmentRequests: string[] = [];
 let upstreamDownloads = 0;
 let historyDelay = 150;
 const thumbnailRequests = new Map<number, number>();
@@ -37,7 +53,8 @@ globalThis.fetch = async (input, init) => {
 		await new Promise((resolve) => setTimeout(resolve, size === 4 ? 150 : historyDelay));
 		const page = Number(url.searchParams.get('pageNumber'));
 		if (repeatHistory) return Response.json(size === 4 ? repeatedBatch.slice(0, 4) : repeatedBatch);
-		return Response.json(entries.slice((page - 1) * size, page * size));
+		const posts = showNewsletters ? newsletters : entries;
+		return Response.json(posts.slice((page - 1) * size, page * size));
 	}
 	if (url.pathname.includes('Thumbnail')) {
 		// Valid image bytes with generic/missing MIME must still render through our route.
@@ -50,6 +67,12 @@ globalThis.fetch = async (input, init) => {
 	}
 	if (url.pathname.includes('Download')) {
 		upstreamDownloads++;
+		const attachment = newsletters.flatMap((entry) => entry.attachments ?? []).find((file) => file.fileId === Number(url.pathname.split('/').at(-1)));
+		if (attachment) {
+			assert.equal(url.href, `https://hub.infomentor.se${attachment.downloadUrl}`, 'use the attachment URL unchanged');
+			attachmentRequests.push(url.href);
+			return new Response(attachment.extension === 'pdf' ? pdf : Buffer.from('synthetic document'), { headers: { 'Content-Type': 'application/octet-stream' } });
+		}
 		return new Response(png, { headers: { 'Content-Type': 'application/octet-stream' } });
 	}
 	throw new Error(`unexpected upstream request ${url.pathname}`);
@@ -131,6 +154,48 @@ try {
 	const anonymous = await browser.newContext();
 	assert.ok((await anonymous.request.get(`${base}/api/learnlog`, { maxRedirects: 0 })).status() >= 300);
 	await anonymous.close();
+
+	showNewsletters = true;
+	cache.upsertLearnlogEntries(111, newsletters);
+	const monthlyResponse = await page.goto(`${base}/manadsbrev`);
+	assert.equal(monthlyResponse?.status(), 200);
+	const monthlyHtml = await monthlyResponse!.text();
+	assert.ok(monthlyHtml.includes('September.pdf'), 'attachment-only letters must render in SSR from existing cached JSON');
+	assert.ok(monthlyHtml.includes('Information från förskolan'), 'match a monthly attachment filename even with a generic post title');
+	assert.ok(!monthlyHtml.includes('Utflykt.pdf'), 'do not classify every PDF as a monthly letter');
+	await page.waitForFunction(() => !document.querySelector('[role="status"]'));
+	assert.equal(await page.locator('h2').count(), 2);
+	assert.equal(await page.getByRole('heading', { name: 'Bilagor' }).count(), 2);
+	assert.equal(attachmentRequests.length, 0, 'viewing or syncing a monthly letter must not preload attachments');
+	const pdfLink = page.getByRole('link', { name: 'September.pdf', exact: false });
+	assert.equal(await pdfLink.getAttribute('target'), '_blank');
+	assert.equal(await pdfLink.getAttribute('href'), '/media/20001');
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const downloadedPdf = await context.request.get(`${base}/media/20001`);
+		assert.equal(downloadedPdf.status(), 200);
+		assert.equal(downloadedPdf.headers()['content-type'], 'application/pdf');
+		assert.deepEqual(await downloadedPdf.body(), pdf);
+	}
+	assert.equal(attachmentRequests.length, 1, 'second PDF request must use the local disk cache');
+	const otherDocument = await context.request.get(`${base}/media/20002`);
+	assert.equal(otherDocument.status(), 200, 'non-PDF attachments use the same download path');
+	assert.equal(await otherDocument.text(), 'synthetic document');
+	assert.equal((await context.request.get(`${base}/media/999999`)).status(), 404);
+	const anonymousFiles = await browser.newContext();
+	assert.ok((await anonymousFiles.request.get(`${base}/media/20001`, { maxRedirects: 0 })).status() >= 300, 'cached PDFs must still require login');
+	await anonymousFiles.close();
+	await page.setViewportSize({ width: 390, height: 844 });
+	assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'long attachment filenames must not overflow on mobile');
+	await page.screenshot({ path: '/tmp/dementor-manadsbrev-mobile.png' });
+	await page.goto(`${base}/larLogg`);
+	await page.getByRole('link', { name: 'September.pdf', exact: false }).waitFor();
+	await page.getByRole('button', { name: 'Öppna foto', exact: true }).first().click();
+	await page.waitForSelector('dialog[open] img');
+	assert.equal(await page.locator('dialog[open] img').count(), 1, 'attachments must not become lightbox slides');
+	await page.getByRole('button', { name: 'Stäng ✕' }).click();
+	await page.waitForFunction(() => !document.querySelector('[role="status"]'));
+	showNewsletters = false;
+	console.log('OK: monthly title/filename routing, named attachments in both feeds, PDF MIME/cache/auth and mobile layout');
 
 	// A genuinely cold cache must show the first four before slow history finishes.
 	const { db } = await server.ssrLoadModule('/src/lib/server/db.ts');

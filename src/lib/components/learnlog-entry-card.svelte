@@ -37,6 +37,7 @@
 	import type { LightboxMediaItem } from './media-lightbox.svelte';
 	import type { CachedLearnlogEntry } from '$lib/learnlog';
 	import MediaThumbnail from './media-thumbnail.svelte';
+	import { FileText, ArrowUpRight } from '@lucide/svelte';
 
 	interface Props {
 		entry: CachedLearnlogEntry;
@@ -46,6 +47,7 @@
 	}
 
 	let { entry, cachedMedia, pupilLabel, onOpenLightbox }: Props = $props();
+	const attachments = $derived(entry.json.attachments ?? []);
 
 	function isVideo(fileType: string): boolean {
 		return isVideoKind(mediaKind(fileType));
@@ -76,6 +78,33 @@
 	<div class="learnlog-text prose prose-sm max-w-none">
 		{@html entry.json.text}
 	</div>
+	{#if attachments.length > 0}
+		<div class="mt-4">
+			<h3 class="mb-2 text-sm font-semibold">Bilagor</h3>
+			<ul class="space-y-2">
+				{#each attachments as attachment (attachment.fileId)}
+					<li>
+						<a
+							href={resolve('/media/[fileId]', { fileId: String(attachment.fileId) })}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="flex min-h-11 items-center gap-3 rounded-md border-2 border-border bg-muted px-3 py-2 text-sm shadow-xs hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+						>
+							<FileText class="size-5 shrink-0" aria-hidden="true" />
+							<span class="min-w-0 flex-1 font-semibold wrap-anywhere">
+								{attachment.fileName || 'Bifogad fil'}
+							</span>
+							<span class="shrink-0 text-xs text-muted-foreground">
+								{tileKindLabel({ fileType: 'Document', fileExtension: attachment.extension })}
+							</span>
+							<ArrowUpRight class="size-4 shrink-0" aria-hidden="true" />
+							<span class="sr-only">(öppnas i ny flik)</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
 	{#if entry.json.media.length > 0}
 		<div class="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
 			{#each entry.json.media as m, i (m.fileId)}

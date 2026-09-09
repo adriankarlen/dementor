@@ -3,6 +3,7 @@
 import { open, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MEDIA_DIR } from './db.ts';
+import { learnlogFiles } from '../learnlog.ts';
 import { createSession } from './infomentor/httpClient.ts';
 import type { CookieJar } from './infomentor/cookieJar.ts';
 import {
@@ -258,7 +259,7 @@ export async function cacheMediaForEntries(
 ): Promise<{ attempted: number; downloaded: number; cached: number; failed: number }> {
 	const totals = { attempted: 0, downloaded: 0, cached: 0, failed: 0 };
 	for (const { pupilSwitchId, entry } of entries) {
-		for (const media of entry.media) {
+		for (const media of learnlogFiles(entry)) {
 			if ((await nonEmptySize(localMediaPath(media.fileId, media.fileExtension))) > 0) {
 				totals.cached++;
 				continue;

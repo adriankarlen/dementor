@@ -13,6 +13,7 @@
 import { db } from './db.ts';
 import {
 	LEARNLOG_PAGE_SIZE,
+	learnlogFiles,
 	parseLearnlogCursor,
 	type CachedLearnlogEntry,
 	type LearnlogPage
@@ -180,7 +181,7 @@ export function listLearnlogPage(cursorValue: string | null = null): LearnlogPag
 	const nextCursor =
 		rows.length > LEARNLOG_PAGE_SIZE && last ? `${last.entryId}:${last.pupilSwitchId}` : null;
 	const cachedMediaFileIds = entries
-		.flatMap((entry) => entry.json.media)
+		.flatMap((entry) => learnlogFiles(entry.json))
 		.filter((media) => (getCachedMedia(media.fileId)?.contentLength ?? 0) > 0)
 		.map((media) => media.fileId);
 	return { entries, nextCursor, cachedMediaFileIds };
@@ -193,16 +194,21 @@ export function findLearnlogMedia(
 	const row = db
 		.prepare(`
 		SELECT l.*, p.display_name AS pupil_name
-		FROM learnlog_entries l JOIN pupils p ON p.switch_id = l.pupil_switch_id,
-		json_each(l.json, '$.media') m
-		WHERE json_extract(m.value, '$.fileId') = ? LIMIT 1
+		FROM learnlog_entries l JOIN pupils p ON p.switch_id = l.pupil_switch_id
+		WHERE EXISTS (
+			SELECT 1 FROM json_each(l.json, '$.media') m
+			WHERE json_extract(m.value, '$.fileId') = ?
+		) OR EXISTS (
+			SELECT 1 FROM json_each(l.json, '$.attachments') a
+			WHERE json_extract(a.value, '$.fileId') = ?
+		) LIMIT 1
 	`)
-		.get(fileId);
+		.get(fileId, fileId);
 	if (!row) return null;
 	const parsed = parseLearnlogRow(row);
 	// SAFETY: stored by upsertLearnlogEntries from InfoMentor's typed response.
 	const entry = JSON.parse(parsed.json) as LearnlogEntry;
-	const media = entry.media.find((item) => item.fileId === fileId);
+	const media = learnlogFiles(entry).find((item) => item.fileId === fileId);
 	return media ? { pupilSwitchId: parsed.pupilSwitchId, entry, media } : null;
 }
 

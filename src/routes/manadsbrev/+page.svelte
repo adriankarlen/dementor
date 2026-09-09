@@ -53,19 +53,12 @@
 
 	{#if data.rows.length === 0}
 		{#if data.rawCount === 0}
-			<!--
-				Heuristic placeholder: this tab currently filters by
-				case-insensitive title substring "månadsbrev" /
-				"manadsbrev" (see `+page.server.ts`). If the cache
-				has Lärlogg entries but none matched the heuristic,
-				say so and point at the full Lärlogg feed rather than
-				pretending the tab is authoritative.
-			-->
+			<!-- Matching uses post titles and attachment filenames, not the body text. -->
 			<div class="rounded-2xl border-2 border-border bg-card p-6 text-sm shadow-md">
 				<p>
-					Inga månadsbrev hittades bland Lärlogg-inläggen. Den här vyn filtrerar Lärlogg-flödet på
-					titlar som innehåller "månadsbrev" (med eller utan å) — om förskolan skickar månadsbrevet
-					under en annan rubrik dyker det inte upp här.
+					Inga månadsbrev hittades bland Lärlogg-inläggen. Här visas inlägg med "månadsbrev" (med
+					eller utan å) i rubriken eller i en bilagas filnamn. Brev med andra namn finns fortfarande
+					i hela Lärlogg.
 				</p>
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a

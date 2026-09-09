@@ -10,12 +10,10 @@
 //
 // `fileType` from IM is uppercase-and-PascalCase for the known
 // cases ("Image", "Video"); for everything else (PDFs, generic
-// files, unknown) it's whatever InfoMentor decides — currently
-// observed as `"Document"`, but the fallback here treats anything
-// unrecognised as a document (link-out to the file) rather than
-// trying to render it as an `<img>` — safer default for "we don't
-// know what this is", and it surfaces the previously-invisible PDF
-// attachments that were the original bug report.
+// files, unknown) it's whatever InfoMentor decides. Treat anything
+// unrecognised as a document link rather than a broken `<img>`.
+// This only classifies `media`: the separate `attachments` array
+// (including Månadsbrev PDFs) is always rendered as named file links.
 
 export type MediaKind = 'image' | 'video' | 'document';
 

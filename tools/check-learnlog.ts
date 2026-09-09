@@ -10,6 +10,7 @@ import type { LearnlogEntry } from '../src/lib/server/infomentor/api.ts';
 const directory = await mkdtemp(join(tmpdir(), 'dementor-check-'));
 process.env.DATABASE_PATH = join(directory, 'cache.sqlite');
 process.env.MEDIA_DIR = join(directory, 'media');
+const { learnlogFiles, isManadsbrev } = await import('../src/lib/learnlog.ts');
 const { db } = await import('../src/lib/server/db.ts');
 const cache = await import('../src/lib/server/cache.ts');
 const { syncLearnlog } = await import('../src/lib/server/sync.ts');
@@ -37,6 +38,7 @@ let source = new Map<number, LearnlogEntry[]>();
 let failPage = 0;
 let pageOverride: ((page: number, size: number) => LearnlogEntry[] | undefined) | undefined;
 let mediaRequests = 0;
+const mediaUrls: string[] = [];
 let mediaBody = Buffer.from('sample media bytes');
 let mediaStatus = 200;
 let mediaContentType: string | null = 'application/octet-stream';
@@ -63,6 +65,7 @@ globalThis.fetch = async (input) => {
 	}
 	if (url.pathname.includes('/Resources/')) {
 		mediaRequests++;
+		mediaUrls.push(url.href);
 		return new Response(new Uint8Array(mediaBody), {
 			status: mediaStatus,
 			headers: mediaContentType ? { 'Content-Type': mediaContentType } : undefined
@@ -90,6 +93,49 @@ try {
 	assert.throws(() => cache.listLearnlogPage('not-a-cursor'));
 	assert.throws(() => cache.listLearnlogPage('999999999999999999:1'));
 	console.log('OK: four-row keyset pages, ties, inserted posts, invalid cursors');
+
+	reset();
+	const letter: LearnlogEntry = {
+		...entry(20),
+		title: 'Information från förskolan',
+		attachments: [
+			{ fileId: 8001, fileName: 'Förskolan_MÅNADSBREV_september.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/8001?api=IM2&moduleType=LearnLogAttachment&connectionId=20' },
+			{ fileId: 8002, fileName: 'Schema.xlsx', fileType: 'Spreadsheet', extension: 'xlsx', downloadUrl: '/Resources/Resource/Download/8002?api=IM2&moduleType=LearnLogAttachment&connectionId=20' }
+		]
+	};
+	assert.equal(isManadsbrev(letter), true, 'filename-only monthly letters belong on /manadsbrev');
+	for (const title of ['Månadsbrev september', 'MANADSBREV', 'Månadsbrevet', 'Ma\u030anadsbrev']) {
+		assert.equal(isManadsbrev({ ...entry(1), title }), true);
+	}
+	assert.equal(isManadsbrev({ ...entry(1), text: '<p>Månadsbrev skickas senare.</p>' }), false, 'body references do not classify a post');
+	assert.equal(isManadsbrev({ ...letter, attachments: [{ ...letter.attachments![0], fileName: 'Utflykt.pdf' }] }), false, 'a PDF alone is not a monthly letter');
+	assert.deepEqual(learnlogFiles(entry(1)), [], 'legacy entries without attachments still work');
+	cache.upsertLearnlogEntries(111, [letter]);
+	assert.deepEqual(cache.listLearnlogEntries()[0].json, letter, 'read attachments from the existing raw JSON cache');
+	assert.deepEqual(cache.listLearnlogPage().entries[0].json.attachments, letter.attachments);
+	const attachment = cache.findLearnlogMedia(8001);
+	assert.ok(attachment, 'download lookup must include attachments, not just media');
+	assert.equal(attachment.pupilSwitchId, 111);
+	assert.equal(attachment.entry.id, 20);
+	assert.deepEqual(attachment.media, {
+		fileId: 8001, fileType: 'Document', fileExtension: 'pdf', thumbnailUrl: '',
+		fileUrl: letter.attachments![0].downloadUrl
+	});
+	assert.equal(cache.findLearnlogMedia(8002)?.media.fileExtension, 'xlsx');
+	assert.equal(cache.findLearnlogMedia(9999), null, 'unknown files must not be downloadable');
+	mediaBody = Buffer.from('%PDF-1.4\nsynthetic attachment\n%%EOF');
+	const attachmentPath = await ensureMedia(createCookieJar(), attachment.media, attachment.pupilSwitchId, attachment.entry.id);
+	assert.equal(mediaUrls.at(-1), `https://hub.infomentor.se${letter.attachments![0].downloadUrl}`, 'preserve the LearnLogAttachment URL and connectionId');
+	assert.deepEqual(await readFile(attachmentPath), mediaBody);
+	assert.deepEqual(cache.listLearnlogPage().cachedMediaFileIds, [8001]);
+	assert.ok(cache.listCachedMediaFileIds().has(8001));
+	const photo = { fileId: 8003, fileType: 'Image', fileExtension: 'png', fileUrl: '/Resources/Resource/Download/8003', thumbnailUrl: '/Resources/Resource/Thumbnail/8003' };
+	cache.upsertLearnlogEntries(111, [{ ...letter, media: [photo] }]);
+	assert.deepEqual(cache.findLearnlogMedia(8003)?.media, photo, 'mixed media and attachments keep photo lookup intact');
+	assert.ok(cache.findLearnlogMedia(8001));
+	mediaRequests = 0;
+	mediaBody = Buffer.from('sample media bytes');
+	console.log('OK: monthly titles/filenames, legacy cache, PDF/generic attachments, trusted downloads and mixed media');
 
 	reset();
 	source = new Map([[111, Array.from({ length: 61 }, (_, i) => entry(100 - i))], [222, [entry(500), entry(499)]]]);

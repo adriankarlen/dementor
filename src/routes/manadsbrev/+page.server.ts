@@ -7,10 +7,8 @@
 // (once per pupil). This page collects those.
 //
 // Current placeholder heuristic:
-//   - Filter the Lärlogg cache by case-insensitive title substring
-//     match on "månadsbrev" / "manadsbrev" (the user-confirmed
-//     Swedish term; covers both the spelled-with-å and
-//     spelled-without-å variants IM sometimes uses).
+//   - Filter the Lärlogg cache by "månadsbrev" / "manadsbrev" in
+//     either the title or an attachment filename, ignoring case.
 //   - No cross-pupil dedup applied yet. The Lärlogg cache is keyed
 //     on (pupil_switch_id, entry_id), so without a shared
 //     "message group" key — which docs/api-notes.md does NOT
@@ -27,6 +25,7 @@
 // which the SyncIndicator on this page also fires. No new sync
 // endpoint needed.
 import type { PageServerLoad } from './$types';
+import { isManadsbrev } from '$lib/learnlog';
 
 import { listCachedMediaFileIds, listLearnlogEntries, listPupils } from '$lib/server/cache';
 import type { CachedLearnlogEntry } from '$lib/server/cache';
@@ -60,24 +59,6 @@ function dedupKey(entry: LearnlogEntry): string {
 }
 
 /**
- * Placeholder match: title contains the Swedish word for monthly
- * newsletter (with or without the diacritic — IM has been observed
- * to mix both in old captures). Case-insensitive substring, anchored
- * on word boundaries to avoid false positives in titles that merely
- * reference the word in passing.
- *
- * KNOWN LIMITATION (will be revisited when real dedup key arrives):
- * a Månadsbrev titled e.g. "Välkomstbrev från förskolan" wouldn't
- * match. The user knows the tab is heuristic; the title-substring
- * rule is documented in this file's header so it's discoverable
- * from the code.
- */
-function isManadsbrevTitle(title: string): boolean {
-	const normalized = title.toLowerCase();
-	return /\bmånadsbrev\b|\bmanadsbrev\b/.test(normalized);
-}
-
-/**
  * Group cached entries by `dedupKey()` and reduce to one canonical
  * row per group. With the per-pupil placeholder key each group has
  * exactly one entry and `dupes` is always empty — the structure is
@@ -93,7 +74,7 @@ export interface ManadsbrevRow {
 
 export const load: PageServerLoad = () => {
 	const all = listLearnlogEntries();
-	const matching = all.filter((e) => isManadsbrevTitle(e.json.title));
+	const matching = all.filter((e) => isManadsbrev(e.json));
 
 	// Keep the highest-id entry per dedupKey() as the canonical row;
 	// the others become `dupes`. Today, with per-pupil ids as the
