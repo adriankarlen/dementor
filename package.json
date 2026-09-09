@@ -13,7 +13,9 @@
 		"lint": "oxfmt --check && oxlint",
 		"lint:fix": "oxlint --fix",
 		"format": "oxfmt",
-		"create-user": "node tools/create-user.ts"
+		"create-user": "node tools/create-user.ts",
+		"clear:cache": "node tools/clear-cache.ts",
+		"clear:hard": "node tools/clear-cache.ts --hard"
 	},
 	"dependencies": {
 		"arktype": "^2.2.3"
