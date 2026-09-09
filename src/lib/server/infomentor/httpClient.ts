@@ -44,7 +44,7 @@ export function createSession(initialJar?: CookieJar): Session {
 		{ maxRedirects = 8 }: { maxRedirects?: number } = {}
 	): Promise<Response> {
 		let currentUrl = url;
-		let currentInit: RequestInit = { ...init };
+		let currentInit: RequestInit = { ...init, signal: init.signal ?? AbortSignal.timeout(45_000) };
 		let hops = 0;
 
 		for (;;) {
@@ -76,6 +76,7 @@ export function createSession(initialJar?: CookieJar): Session {
 
 			const location = response.headers.get('location');
 			if (!location) return response;
+			await response.body?.cancel();
 			if (++hops > maxRedirects) throw new Error(`Too many redirects following ${url}`);
 
 			currentUrl = new URL(location, currentUrl).href;
@@ -86,7 +87,7 @@ export function createSession(initialJar?: CookieJar): Session {
 					method !== 'GET' &&
 					method !== 'HEAD')
 			) {
-				currentInit = {};
+				currentInit = { signal: currentInit.signal };
 			}
 			// otherwise keep method/body/headers for the next hop
 			// (307/308, or a GET redirect chain)

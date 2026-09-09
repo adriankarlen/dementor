@@ -136,6 +136,24 @@ const MIGRATIONS: Migration[] = [
 				synced_at TEXT NOT NULL
 			);`
 		]
+	},
+	{
+		version: 3,
+		description: 'Resumable Lärlogg metadata sync',
+		statements: [
+			`CREATE TABLE IF NOT EXISTS learnlog_sync (
+				pupil_switch_id INTEGER PRIMARY KEY REFERENCES pupils(switch_id) ON DELETE CASCADE,
+				completed_highest INTEGER,
+				target_highest INTEGER,
+				next_page INTEGER NOT NULL DEFAULT 1
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_learnlog_feed ON learnlog_entries (entry_id DESC, pupil_switch_id DESC);`
+		]
+	},
+	{
+		version: 4,
+		description: 'Lärlogg overlap detection independent of ID ordering',
+		statements: ['ALTER TABLE learnlog_sync ADD COLUMN known_ids TEXT;']
 	}
 ];
 

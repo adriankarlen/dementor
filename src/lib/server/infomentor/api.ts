@@ -30,6 +30,7 @@ import { InfoMentorSessionExpiredError } from './errors.ts';
 import { isLoginPage } from './htmlForms.ts';
 
 export const HUB_ROOT = 'https://hub.infomentor.se/';
+const activePupils = new WeakMap<CookieJar, number>();
 
 // ---- Public response shapes (only fields the dashboard reads) ----
 
@@ -212,6 +213,10 @@ async function postJson<T>(jar: CookieJar, url: string, body: JsonRequestBody): 
  * page (which would mean session expired).
  */
 export async function switchPupil(jar: CookieJar, switchId: number): Promise<void> {
+	// All app switch+request pairs run through the per-jar queue. Avoid
+	// loading the hub HTML again for every thumbnail of the same pupil.
+	if (activePupils.get(jar) === switchId) return;
+	activePupils.delete(jar);
 	const session = createSession(jar);
 	const response = await session.request(
 		`${HUB_ROOT}Account/PupilSwitcher/SwitchPupil/${switchId}`
@@ -232,6 +237,7 @@ export async function switchPupil(jar: CookieJar, switchId: number): Promise<voi
 		);
 		throw new InfoMentorSessionExpiredError();
 	}
+	activePupils.set(jar, switchId);
 }
 
 /**

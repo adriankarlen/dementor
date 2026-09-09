@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { isVideoKind, mediaKind } from './media-kind.ts';
+	import MediaThumbnail from './media-thumbnail.svelte';
 
 	/**
 	 * Full-screen photo/video lightbox with carousel navigation for
@@ -53,14 +54,7 @@
 	// position within the filtered subset that arrow keys /
 	// prev-next actually move through.
 	const carouselMedia = $derived(media.filter((m) => mediaKind(m.fileType) !== 'document'));
-	const carouselIndex = $derived(
-		// If `index` happens to point at a document (shouldn't, since
-		// the grid never opens the lightbox on a document tile), fall
-		// back to the last carousel item so the dialog still shows
-		// something. Defensive against callers passing an index
-		// outside the carousel subset.
-		carouselMedia.length === 0 ? 0 : Math.max(0, Math.min(index, carouselMedia.length - 1))
-	);
+	const carouselIndex = $derived(Math.max(0, carouselMedia.indexOf(media[index])));
 	const carouselCurrent = $derived(carouselMedia[carouselIndex]);
 
 	function close() {
@@ -149,7 +143,7 @@
 	onkeydown={onKeydown}
 	class="lightbox-dialog m-auto h-dvh w-dvw max-w-none overflow-hidden border-0 bg-card p-0 text-foreground sm:h-[88dvh] sm:w-[92vw] sm:max-w-4xl sm:rounded-2xl sm:border-2 sm:border-border sm:shadow-lg"
 >
-	{#if carouselCurrent}
+	{#if open && carouselCurrent}
 		<div class="flex h-full flex-col">
 			<div class="flex items-center justify-between border-b-2 border-border px-4 py-3">
 				<span class="text-sm text-muted-foreground"
@@ -232,19 +226,7 @@
 									: 'border-border opacity-70 hover:-translate-x-px hover:-translate-y-px hover:opacity-100 hover:shadow-sm'
 							}`}
 						>
-							{#if isVideoKind(mediaKind(m.fileType))}
-								<video
-									src={resolveSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-									muted
-									class="h-full w-full object-cover"
-								></video>
-							{:else}
-								<img
-									src={resolveSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-									alt=""
-									class="h-full w-full object-cover"
-								/>
-							{/if}
+							<MediaThumbnail fileId={m.fileId} video={isVideoKind(mediaKind(m.fileType))} />
 						</button>
 					{/each}
 				</div>

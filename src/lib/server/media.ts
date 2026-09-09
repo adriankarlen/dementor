@@ -1,77 +1,35 @@
-// Phase 4 media caching: walk the media array of freshly-synced
-// Lärlogg entries and download any not-yet-cached files to disk.
-//
-// Design notes (cross-ref docs/implementation-plan.md "Phase 4"):
-//   - Bytes come from `fileUrl` (the full-resolution file, not the
-//     pre-generated thumbnail — see docs/api-notes.md on the
-//     "thumbnail endpoint only serves pre-generated sizes" footgun).
-//     Serving the full file locally avoids that whole class of bug
-//     and still gives us the "loads fast on a phone" property the
-//     cache exists for without us having to know which thumbnail
-//     size InfoMentor happens to have pre-rendered.
-//   - `thumbnailUrl`/`fileUrl` are NEVER rewritten — per the
-//     confirmed hard constraint in docs/api-notes.md.
-//   - The on-disk filename is `MEDIA_DIR/<fileId>.<fileExtension>`,
-//     so the SvelteKit route can serve any fileId straight off the
-//     disk without a separate lookup. The `media` table adds the
-//     provenance (pupil/entry) and content-length metadata that
-//     looking at the bare file on disk can't tell you.
-//   - Per-file-id idempotent: re-syncing the same id is a no-op
-//     (`upsertMedia` updates the timestamp but the bytes are
-//     unchanged). The `shouldDownload` short-circuit means we don't
-//     even hit InfoMentor for known caches.
-//   - Per-file failures are LOGGED, not thrown — one bad media file
-//     shouldn't fail the whole Lärlogg sync and leave the page
-//     stuck on "Hämtar senaste…". The cap on max response bytes
-//     protects against InfoMentor accidentally streaming a tarball
-//     or a runaway HTML error page in place of an image.
-import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+// Media is downloaded only when a thumbnail becomes visible or a full
+// item is opened. Syncing post metadata never waits for these bytes.
+import { open, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-
 import { MEDIA_DIR } from './db.ts';
 import { createSession } from './infomentor/httpClient.ts';
 import type { CookieJar } from './infomentor/cookieJar.ts';
-import type { LearnlogEntry, LearnlogMedia } from './infomentor/api.ts';
+import {
+	getCommunicationAppData,
+	switchPupil,
+	type LearnlogEntry,
+	type LearnlogMedia
+} from './infomentor/api.ts';
+import { isLoginPage, isRelayPage } from './infomentor/htmlForms.ts';
 import { InfoMentorSessionExpiredError } from './infomentor/errors.ts';
+import { withInfoMentorSession } from './infomentor/queue.ts';
 import { upsertMedia } from './cache.ts';
+import { EmptyDownloadError, saveDownload } from './download.ts';
 
-// 50 MB. Photos from phones are typically <10 MB; InfoMentor videos
-// are usually <100 MB but the dashboard is responsive even if we
-// don't cache huge videos. Lower = safer; raise as needed.
-const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
-// Used when IM's fileExtension is missing/empty so on-disk paths
-// stay plain ("123.bin" instead of "123.") and Content-Type falls
-// back to application/octet-stream rather than 404'ing.
-const FALLBACK_EXTENSION = 'bin';
+export class ThumbnailUnavailableError extends Error {}
 
-/**
- * Normalize IM's `fileExtension` ("jpeg", ".jpeg", "", …) to a
- * bare suffix suitable both for the on-disk path and for matching
- * in `contentTypeForFileExtension`. The original (raw) value is
- * preserved in the DB row; we sanitize at the FS boundary.
- */
+// Full videos are fetched on explicit open, streamed to disk, not buffered.
+const MAX_MEDIA_BYTES = 256 * 1024 * 1024;
+const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
+
 function sanitizeExtension(raw: string): string {
-	const trimmed = raw.trim().replace(/^\./, '').toLowerCase();
-	return trimmed.length > 0 ? trimmed : FALLBACK_EXTENSION;
+	const extension = raw.trim().replace(/^\./, '').toLowerCase();
+	return /^[a-z0-9]{1,10}$/.test(extension) ? extension : 'bin';
 }
 
-/**
- * Map an InfoMentor `fileExtension` to a `Content-Type` for the
- * SvelteKit route's response. Covers the extensions we've actually
- * seen plus a handful of other common phone-video formats. Anything
- * still unrecognised falls back to `fileType` (IM's own
- * Image/Video classification) so a browser at least gets a generic
- * `image/*` or `video/*` type and renders/plays the file inline
- * instead of treating an unfamiliar extension as an opaque download
- * (`application/octet-stream` forces "Save As" in most browsers).
- * Only if both signals are unhelpful do we fall through to
- * `application/octet-stream`.
- */
 export function contentTypeForFileExtension(extension: string, fileType?: string | null): string {
-	const ext = sanitizeExtension(extension);
-	switch (ext) {
-		// images
+	switch (sanitizeExtension(extension)) {
 		case 'jpg':
 		case 'jpeg':
 			return 'image/jpeg';
@@ -85,7 +43,6 @@ export function contentTypeForFileExtension(extension: string, fileType?: string
 			return 'image/heic';
 		case 'bmp':
 			return 'image/bmp';
-		// videos
 		case 'mp4':
 			return 'video/mp4';
 		case 'mov':
@@ -103,153 +60,219 @@ export function contentTypeForFileExtension(extension: string, fileType?: string
 			return 'video/x-ms-wmv';
 		case 'mkv':
 			return 'video/x-matroska';
-		default: {
-			const kind = fileType?.toLowerCase();
-			if (kind === 'video') return 'video/mp4';
-			if (kind === 'image') return 'image/jpeg';
-			return 'application/octet-stream';
-		}
+		case 'pdf':
+			return 'application/pdf';
+		default:
+			return fileType?.toLowerCase() === 'image' ? 'image/jpeg' : 'application/octet-stream';
 	}
 }
 
-/**
- * The `<MEDIA_DIR>/<fileId>.<fileExtension>` path used by both the
- * write path (this module) and the read path (`/media/[fileId]/+server.ts`).
- * `extension` is sanitized to drop leading dots / empty strings so
- * the on-disk filename is never "123..jpeg" or "123.".
- */
 export function localMediaPath(fileId: number, extension: string): string {
 	return join(MEDIA_DIR, `${fileId}.${sanitizeExtension(extension)}`);
 }
 
-/**
- * True if the media file is already on disk + recorded in the
- * cache. The cached index is the source of truth — the on-disk
- * check is belt-and-braces in case the row was deleted but the
- * bytes survived (or vice-versa).
- */
-function shouldDownload(cachedFileIds: Set<number>, mediaItem: LearnlogMedia): boolean {
-	if (cachedFileIds.has(mediaItem.fileId)) return false;
-	if (existsSync(localMediaPath(mediaItem.fileId, mediaItem.fileExtension))) return false;
-	return true;
+export function localThumbnailPath(fileId: number): string {
+	return join(MEDIA_DIR, `${fileId}.thumbnail`);
 }
 
-/**
- * Download one media item's bytes and persist. Returns true on a
- * fully completed write, false if the file was skipped (already
- * there) or any failure occurred. Per-file failures are logged but
- * never thrown — see the module-level note on why.
- */
-async function downloadOneMediaItem(
+async function nonEmptySize(path: string): Promise<number> {
+	try {
+		const info = await stat(path);
+		return info.isFile() ? info.size : 0;
+	} catch {
+		return 0;
+	}
+}
+
+/** Thumbnail MIME follows the bytes, not the full video's .mov extension. */
+export async function thumbnailContentType(path: string): Promise<string> {
+	const file = await open(path, 'r');
+	try {
+		const header = Buffer.alloc(12);
+		await file.read(header, 0, header.length, 0);
+		if (header[0] === 0xff && header[1] === 0xd8) return 'image/jpeg';
+		if (header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
+			return 'image/png';
+		if (header.toString('ascii', 0, 3) === 'GIF') return 'image/gif';
+		if (header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WEBP')
+			return 'image/webp';
+		throw new ThumbnailUnavailableError('unsupported thumbnail response');
+	} finally {
+		await file.close();
+	}
+}
+
+// A denial of one resource does not prove the whole InfoMentor session died.
+// This probe runs inside the existing per-jar lock; it must not acquire it again.
+async function confirmMediaSession(jar: CookieJar): Promise<void> {
+	try {
+		await getCommunicationAppData(jar);
+	} catch (err) {
+		if (err instanceof InfoMentorSessionExpiredError) throw err;
+		// An inconclusive probe (5xx/network/invalid JSON) is not evidence of
+		// expiry. The caller still reports the original media failure.
+	}
+}
+
+async function validateMediaBody(
+	path: string,
+	thumbnail: boolean,
+	contentType: string
+): Promise<void> {
+	const file = await open(path, 'r');
+	let text: string;
+	try {
+		// Bounded prefix only, even for large full-resolution files. Recognize
+		// login/relay responses even when their MIME header is missing or wrong.
+		const prefix = Buffer.alloc(64 * 1024);
+		const { bytesRead } = await file.read(prefix, 0, prefix.length, 0);
+		text = prefix.toString('utf8', 0, bytesRead);
+	} finally {
+		await file.close();
+	}
+	if (isLoginPage(text) || isRelayPage(text)) throw new InfoMentorSessionExpiredError();
+	if (thumbnail) {
+		// Serve our own MIME based on the signature, not InfoMentor's label.
+		// Invalid/HTML/JSON bodies still fail here before the atomic rename.
+		await thumbnailContentType(path);
+	} else if (
+		contentType.includes('html') ||
+		contentType.includes('json') ||
+		/^\s*(?:<!doctype html|<html\b)/i.test(text)
+	) {
+		throw new Error('unexpected media response body');
+	}
+}
+
+// Deduplicate concurrent requests and back off on empty/failed upstream files.
+// Per jar: one parent's auth failure must not prevent another parent's retry.
+const pending = new WeakMap<CookieJar, Map<string, Promise<string>>>();
+interface FailedMedia {
+	retryAt: number;
+	thumbnailUnavailable: boolean;
+}
+const failures = new WeakMap<CookieJar, Map<string, FailedMedia>>();
+
+export async function ensureMedia(
 	jar: CookieJar,
-	mediaItem: LearnlogMedia,
+	media: LearnlogMedia,
 	pupilSwitchId: number,
-	entryId: number
-): Promise<boolean> {
-	const url = `https://hub.infomentor.se${mediaItem.fileUrl}`;
-	const session = createSession(jar);
-	const response = await session.request(url);
-
-	if (response.status === 401 || response.status === 403) {
-		console.warn(
-			`[dementor] media ${mediaItem.fileId}: HTTP ${response.status} fetching ${url} — treating as InfoMentor session expiry`
-		);
-		throw new InfoMentorSessionExpiredError();
+	entryId: number,
+	thumbnail = false,
+	isActive: () => boolean = () => true
+): Promise<string> {
+	const path = thumbnail
+		? localThumbnailPath(media.fileId)
+		: localMediaPath(media.fileId, media.fileExtension);
+	const size = await nonEmptySize(path);
+	if (size > 0) return path;
+	const key = `${media.fileId}:${thumbnail}`;
+	const active = pending.get(jar) ?? new Map<string, Promise<string>>();
+	pending.set(jar, active);
+	const existing = active.get(key);
+	if (existing) return existing;
+	const retryAfter = failures.get(jar) ?? new Map<string, FailedMedia>();
+	failures.set(jar, retryAfter);
+	const failure = retryAfter.get(key);
+	if (failure && failure.retryAt > Date.now()) {
+		if (failure.thumbnailUnavailable)
+			throw new ThumbnailUnavailableError('thumbnail unavailable; retry later');
+		throw new Error('media unavailable; retry later');
 	}
-	if (!response.ok) {
-		console.warn(
-			`[dementor] media ${mediaItem.fileId}: HTTP ${response.status} ${response.statusText}, skipping`
-		);
-		return false;
-	}
 
-	// Trusted: any InputFile with extension "csv" and MIME type
-	// "text/csv" shouldn't matter to us, but defensively check
-	// Content-Length + actual byte size against MAX_MEDIA_BYTES.
-	const contentLengthHeader = response.headers.get('content-length');
-	if (contentLengthHeader !== null) {
-		const declared = Number(contentLengthHeader);
-		if (Number.isFinite(declared) && declared > MAX_MEDIA_BYTES) {
-			console.warn(
-				`[dementor] media ${mediaItem.fileId}: Content-Length ${declared} > cap ${MAX_MEDIA_BYTES}, skipping`
-			);
-			await response.body?.cancel();
-			return false;
+	let responseInfo = '';
+	const task = withInfoMentorSession(jar, async () => {
+		if (!isActive()) throw new InfoMentorSessionExpiredError();
+		// Another parent may have finished downloading while this request waited.
+		if ((await nonEmptySize(path)) > 0) return path;
+		const relative = thumbnail ? media.thumbnailUrl : media.fileUrl;
+		if (!relative) {
+			if (thumbnail) throw new ThumbnailUnavailableError('no thumbnail available');
+			throw new Error('no media URL available');
 		}
+		const url = new URL(relative, 'https://hub.infomentor.se/');
+		if (url.origin !== 'https://hub.infomentor.se') throw new Error('invalid media origin');
+		try {
+			await switchPupil(jar, pupilSwitchId);
+		} catch (err) {
+			if (!(err instanceof InfoMentorSessionExpiredError)) throw err;
+			await confirmMediaSession(jar);
+			throw new Error('media pupil unavailable; session expiry not confirmed');
+		}
+		// Keep the thumbnail URL exactly as supplied. Arbitrary sizes return empty 200s.
+		const response = await createSession(jar).request(url.href, {
+			signal: AbortSignal.timeout(120_000)
+		});
+		const type = response.headers.get('content-type')?.toLowerCase() ?? '';
+		// Structural diagnostics only: no upstream URL, cookies or response body.
+		responseInfo = `${thumbnail ? 'thumbnail' : 'full'} HTTP ${response.status} content-type=${JSON.stringify(type.slice(0, 100) || 'missing')} content-length=${JSON.stringify(response.headers.get('content-length')?.slice(0, 30) ?? 'missing')}`;
+		if (response.status === 401 || response.status === 403) {
+			await response.body?.cancel();
+			await confirmMediaSession(jar);
+			throw new Error('media access denied; session expiry not confirmed');
+		}
+		const bytes = await saveDownload(
+			response,
+			path,
+			thumbnail ? MAX_THUMBNAIL_BYTES : MAX_MEDIA_BYTES,
+			async (temp) => {
+				responseInfo += ` received-bytes=${(await stat(temp)).size}`;
+				await validateMediaBody(temp, thumbnail, type);
+			}
+		).catch((err) => {
+			if (thumbnail && err instanceof EmptyDownloadError)
+				throw new ThumbnailUnavailableError(err.message);
+			throw err;
+		});
+		if (!thumbnail) upsertMedia(media, bytes, pupilSwitchId, entryId);
+		return path;
+	});
+	active.set(key, task);
+	try {
+		return await task;
+	} catch (err) {
+		const unavailable = err instanceof ThumbnailUnavailableError;
+		if (!(err instanceof InfoMentorSessionExpiredError)) {
+			retryAfter.set(key, {
+				retryAt: Date.now() + (unavailable ? 3_600_000 : 60_000),
+				thumbnailUnavailable: unavailable
+			});
+		}
+		// Missing video posters are an expected fallback, not a sync failure.
+		if (!(thumbnail && media.fileType.toLowerCase() === 'video' && unavailable)) {
+			console.warn(
+				`[dementor] media ${media.fileId}: ${responseInfo ? responseInfo + ' — ' : ''}${err instanceof Error ? err.message : 'download failed'}`
+			);
+		}
+		throw err;
+	} finally {
+		active.delete(key);
 	}
-
-	// Read the body into memory in one go. Bytes have already been
-	// size-checked via Content-Length (and Phase 4's media items
-	// are realistically small). Streaming-to-disk would buy us
-	// robustness against the cap not being declared; rejecting the
-	// entire item if the cap is blown is fine because we'd rather
-	// skip than buffer an unknown quantity.
-	const arrayBuffer = await response.arrayBuffer();
-	if (arrayBuffer.byteLength > MAX_MEDIA_BYTES) {
-		console.warn(
-			`[dementor] media ${mediaItem.fileId}: actual ${arrayBuffer.byteLength} bytes > cap ${MAX_MEDIA_BYTES}, skipping`
-		);
-		return false;
-	}
-
-	const path = localMediaPath(mediaItem.fileId, mediaItem.fileExtension);
-	await writeFile(path, Buffer.from(arrayBuffer));
-
-	upsertMedia(mediaItem, arrayBuffer.byteLength, pupilSwitchId, entryId);
-	return true;
 }
 
-/**
- * Walk every media item across every provided Lärlogg entry,
- * downloading the ones not already cached. `cachedFileIds` is the
- * pre-cached-id set (a `Set<number>`); `pupilSwitchId` per entry
- * is stored as the file's provenance in the cache. Returns running
- * counts so the caller can log a summary.
- *
- * Errors that are not session expiry (network blips, 5xx, etc.)
- * are caught and logged per item — we don't abort the whole sync
- * because one media file failed. A session-expired error DOES
- * propagate up so the section route can trigger the re-auth UI.
- */
+// Kept for manual cache-warming tools. Normal page sync does not call this.
 export async function cacheMediaForEntries(
 	jar: CookieJar,
 	cachedFileIds: Set<number>,
 	entries: { pupilSwitchId: number; entry: LearnlogEntry }[]
 ): Promise<{ attempted: number; downloaded: number; cached: number; failed: number }> {
-	let attempted = 0;
-	let downloaded = 0;
-	let cached = 0;
-	let failed = 0;
-
+	const totals = { attempted: 0, downloaded: 0, cached: 0, failed: 0 };
 	for (const { pupilSwitchId, entry } of entries) {
-		for (const mediaItem of entry.media) {
-			if (!shouldDownload(cachedFileIds, mediaItem)) {
-				cached++;
+		for (const media of entry.media) {
+			if ((await nonEmptySize(localMediaPath(media.fileId, media.fileExtension))) > 0) {
+				totals.cached++;
 				continue;
 			}
-			attempted++;
+			totals.attempted++;
 			try {
-				const ok = await downloadOneMediaItem(jar, mediaItem, pupilSwitchId, entry.id);
-				// Track successful downloads so a media id reappearing
-				// on a later entry within this same call is skipped
-				// instead of re-downloaded. Failures don't get added,
-				// so a transient network glitch might be retried on the
-				// next sync — that's the right failure semantics.
-				if (ok) cachedFileIds.add(mediaItem.fileId);
-				downloaded += ok ? 1 : 0;
-				failed += ok ? 0 : 1;
+				await ensureMedia(jar, media, pupilSwitchId, entry.id);
+				cachedFileIds.add(media.fileId);
+				totals.downloaded++;
 			} catch (err) {
-				if (err instanceof InfoMentorSessionExpiredError) {
-					// Bubble: the section page needs to show the re-auth panel.
-					throw err;
-				}
-				console.warn(
-					`[dementor] media ${mediaItem.fileId}: download failed: ${err instanceof Error ? err.message : 'unknown error'}`
-				);
-				failed++;
+				if (err instanceof InfoMentorSessionExpiredError) throw err;
+				totals.failed++;
 			}
 		}
 	}
-
-	return { attempted, downloaded, cached, failed };
+	return totals;
 }

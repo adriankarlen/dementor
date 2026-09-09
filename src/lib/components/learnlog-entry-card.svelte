@@ -33,8 +33,10 @@
 -->
 <script lang="ts">
 	import { isVideoKind, mediaKind, tileKindLabel } from './media-kind';
+	import { resolve } from '$app/paths';
 	import type { LightboxMediaItem } from './media-lightbox.svelte';
-	import type { CachedLearnlogEntry } from '$lib/server/cache';
+	import type { CachedLearnlogEntry } from '$lib/learnlog';
+	import MediaThumbnail from './media-thumbnail.svelte';
 
 	interface Props {
 		entry: CachedLearnlogEntry;
@@ -44,29 +46,6 @@
 	}
 
 	let { entry, cachedMedia, pupilLabel, onOpenLightbox }: Props = $props();
-
-	/** Thumbnail src: locally cached `/media/{id}` when we have it,
-	 *  otherwise InfoMentor's own URL resolved against the hub.
-	 *  Same split as the existing larLogg page uses directly. */
-	function thumbSrc(fileId: number, fallbackRelative: string): string {
-		if (cachedMedia.has(fileId)) return `/media/${fileId}`;
-		try {
-			return new URL(fallbackRelative, 'https://hub.infomentor.se/').href;
-		} catch {
-			return fallbackRelative;
-		}
-	}
-
-	/** Full-resolution src — same cached/fallback split as `thumbSrc`,
-	 *  used by the document <a href> and the lightbox's resolveSrc. */
-	function fullSrc(fileId: number, fallbackRelative: string): string {
-		if (cachedMedia.has(fileId)) return `/media/${fileId}`;
-		try {
-			return new URL(fallbackRelative, 'https://hub.infomentor.se/').href;
-		} catch {
-			return fallbackRelative;
-		}
-	}
 
 	function isVideo(fileType: string): boolean {
 		return isVideoKind(mediaKind(fileType));
@@ -114,7 +93,7 @@
 						image/video tiles have.
 					-->
 					<a
-						href={fullSrc(m.fileId, m.fileUrl)}
+						href={resolve('/media/[fileId]', { fileId: String(m.fileId) })}
 						target="_blank"
 						rel="noopener noreferrer"
 						class="group relative flex aspect-square items-center justify-center overflow-hidden rounded-md border-2 border-border bg-muted text-foreground shadow-xs transition-transform hover:-translate-x-px hover:-translate-y-px hover:shadow-sm"
@@ -149,9 +128,9 @@
 						{:else}
 							<span
 								class="pointer-events-none absolute top-1 right-1 rounded-sm border border-border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-xs"
-								title="Öppnas från InfoMentor"
+								title="Hämtas när du öppnar filen"
 							>
-								↗ InfoMentor
+								↓
 							</span>
 						{/if}
 					</a>
@@ -162,28 +141,7 @@
 						class="group relative block overflow-hidden rounded-md border-2 border-border shadow-xs transition-transform hover:-translate-x-px hover:-translate-y-px hover:shadow-sm"
 						aria-label={isVideo(m.fileType) ? 'Öppna video' : 'Öppna foto'}
 					>
-						{#if isVideoKind(kind)}
-							<video
-								src={thumbSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-								class="aspect-square w-full bg-muted object-cover"
-								muted
-								playsinline
-								preload="metadata"
-							></video>
-							<span
-								class="pointer-events-none absolute bottom-1 left-1 rounded-sm bg-black/70 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase"
-							>
-								Video
-							</span>
-						{:else}
-							<img
-								src={thumbSrc(m.fileId, m.thumbnailUrl || m.fileUrl)}
-								alt=""
-								loading="lazy"
-								decoding="async"
-								class="aspect-square w-full bg-muted object-cover"
-							/>
-						{/if}
+						<MediaThumbnail fileId={m.fileId} video={isVideoKind(kind)} />
 						{#if cached}
 							<span
 								class="pointer-events-none absolute top-1 right-1 rounded-sm border border-border bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-foreground shadow-xs"
@@ -194,9 +152,9 @@
 						{:else}
 							<span
 								class="pointer-events-none absolute top-1 right-1 rounded-sm border border-border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground shadow-xs"
-								title="Inte cachad ännu — öppnas från InfoMentor i lightboxen"
+								title="Hämtas när du öppnar filen"
 							>
-								↗ InfoMentor
+								↓
 							</span>
 						{/if}
 					</button>

@@ -1,11 +1,67 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { browser } from '$app/environment';
+	import { resolve } from '$app/paths';
+	import { onDestroy } from 'svelte';
+	import { createInfiniteQuery, QueryClient, type InfiniteData } from '@tanstack/svelte-query';
+	import type { LearnlogPage } from '$lib/learnlog';
 	import LearnlogEntryCard from '$lib/components/learnlog-entry-card.svelte';
 	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 	import ReauthPanel from '$lib/components/reauth-panel.svelte';
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
 
 	let { data } = $props();
+
+	// Per page instance, including SSR. Never share family data in a global QueryClient.
+	const client = new QueryClient();
+	onDestroy(() => client.clear());
+	const feed = createInfiniteQuery<
+		LearnlogPage,
+		Error,
+		InfiniteData<LearnlogPage>,
+		readonly ['learnlog'],
+		string | null
+	>(
+		() => ({
+			queryKey: ['learnlog'],
+			initialPageParam: null,
+			initialData: { pages: [data.initialPage], pageParams: [null] },
+			queryFn: async ({ pageParam, signal }) => {
+				const query = pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : '';
+				const response = await fetch(`/api/learnlog${query}`, { signal });
+				if (!response.ok || response.redirected)
+					throw new Error('Kunde inte hämta inläggen. Logga in igen om sessionen har gått ut.');
+				// SAFETY: /api/learnlog returns the shared LearnlogPage contract.
+				return (await response.json()) as LearnlogPage;
+			},
+			getNextPageParam: (last) => last.nextCursor,
+			enabled: browser,
+			staleTime: Infinity,
+			refetchOnWindowFocus: false,
+			retry: 1
+		}),
+		() => client
+	);
+	const entries = $derived(feed.data?.pages.flatMap((page) => page.entries) ?? []);
+
+	async function refreshFeed() {
+		await feed.refetch({ cancelRefetch: false });
+	}
+	function loadMore() {
+		if (!feed.isFetching && feed.hasNextPage) void feed.fetchNextPage();
+	}
+	function observeMore(node: HTMLElement) {
+		// Reattach after a page arrives, so a still-visible sentinel can fill a tall viewport.
+		if (!feed.hasNextPage || feed.isFetching || feed.isError) return;
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				if (entry.isIntersecting) loadMore();
+			},
+			{ rootMargin: '300px' }
+		);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}
 
 	let reauthShow = $state(false);
 	let syncRef = $state<{ retry: () => Promise<void> } | null>(null);
@@ -63,7 +119,9 @@
 	// Phase 4: which media file-ids are served from local disk.
 	// Wrapped in a Set on the client so we get O(1) lookups inside the
 	// each-loop, which runs once per entry × per attachment.
-	const cachedMedia = $derived(new Set(data.cachedMediaFileIds));
+	const cachedMedia = $derived(
+		new Set(feed.data?.pages.flatMap((page) => page.cachedMediaFileIds) ?? [])
+	);
 
 	// Lightbox state: opened per-entry with that entry's full media
 	// array + the clicked index, so prev/next only carousels within
@@ -81,23 +139,8 @@
 		lightboxOpen = true;
 	}
 
-	/** Full-resolution src for the lightbox — same cached/fallback
-	 *  split as the card's thumbnail src, just resolving fileUrl
-	 *  instead of thumbnailUrl for the fallback case. */
-	function fullSrc(fileId: number, fallbackRelative: string): string {
-		// The cached-media record's `file_id` is the key we used to save
-		// the bytes, so the same /media/<fileId> route serves both the
-		// thumb and full-size renders when we only cache the file
-		// itself. (We save the full file to disk; we don't try to
-		// source a thumb locally, per docs/api-notes.md: "thumbnails are
-		// only pre-generated sizes" — better to skip the thumb and
-		// serve the actual file.)
-		if (cachedMedia.has(fileId)) return `/media/${fileId}`;
-		try {
-			return new URL(fallbackRelative, 'https://hub.infomentor.se/').href;
-		} catch {
-			return fallbackRelative;
-		}
+	function fullSrc(fileId: number): string {
+		return `/media/${fileId}`;
 	}
 </script>
 
@@ -108,6 +151,7 @@
 		<h1 class="text-3xl font-semibold">Lärlogg</h1>
 		<SyncIndicator
 			url="/api/sync/learnlog"
+			onrefresh={refreshFeed}
 			onsessionexpired={() => (reauthShow = true)}
 			bind:this={syncRef}
 		/>
@@ -115,7 +159,7 @@
 
 	<ReauthPanel bind:show={reauthShow} onsuccess={() => syncRef?.retry()} />
 
-	{#if data.entries.length === 0}
+	{#if entries.length === 0}
 		{#if data.pupils.length === 0}
 			<div class="rounded-2xl border-2 border-border bg-card p-6 shadow-md">
 				<p class="text-sm">
@@ -133,7 +177,7 @@
 						{refreshingPupils ? 'Hämtar…' : 'Försök hämta igen'}
 					</button>
 					<a
-						href="/barn"
+						href={resolve('/barn')}
 						class="rounded-md border-2 border-border bg-background px-3 py-1.5 text-sm font-semibold shadow-xs hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-sm"
 					>
 						Lägg till manuellt
@@ -160,10 +204,30 @@
 		{/if}
 	{:else}
 		<ul class="space-y-4">
-			{#each data.entries as entry (entry.pupilSwitchId + ':' + entry.entryId)}
+			{#each entries as entry (entry.pupilSwitchId + ':' + entry.entryId)}
 				<LearnlogEntryCard {entry} {cachedMedia} {pupilLabel} onOpenLightbox={openLightbox} />
 			{/each}
 		</ul>
+	{/if}
+	{#if feed.isError}
+		<p class="text-sm text-destructive" role="alert">{feed.error.message}</p>
+		<button
+			class="rounded-md border-2 border-border bg-card px-4 py-2 shadow-xs"
+			onclick={refreshFeed}>Försök igen</button
+		>
+	{/if}
+	{#if feed.hasNextPage}
+		<div {@attach observeMore} class="flex justify-center py-4">
+			<button
+				class="rounded-md border-2 border-border bg-card px-4 py-2 text-sm shadow-xs disabled:opacity-60"
+				disabled={feed.isFetching}
+				onclick={loadMore}
+			>
+				{feed.isFetchingNextPage ? 'Hämtar fler…' : 'Visa fler inlägg'}
+			</button>
+		</div>
+	{:else if entries.length > 0}
+		<p class="text-center text-xs text-muted-foreground">Alla hämtade inlägg visas.</p>
 	{/if}
 </section>
 

@@ -10,6 +10,8 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test": "node tools/check-learnlog.ts",
+		"test:browser": "node tools/check-learnlog-browser.ts",
 		"lint": "oxfmt --check && oxlint",
 		"lint:fix": "oxlint --fix",
 		"format": "oxfmt",
@@ -18,6 +20,7 @@
 		"clear:hard": "node tools/clear-cache.ts --hard"
 	},
 	"dependencies": {
+		"@tanstack/svelte-query": "^6.1.48",
 		"arktype": "^2.2.3"
 	},
 	"devDependencies": {
@@ -25,6 +28,7 @@
 		"@fontsource-variable/geist-mono": "^5.3.0",
 		"@lucide/svelte": "^1.40.0",
 		"@oxlint/plugins": "1.81.0",
+		"@playwright/test": "^1.63.0",
 		"@sveltejs/adapter-node": "^5.5.4",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",

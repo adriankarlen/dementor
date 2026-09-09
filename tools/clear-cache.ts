@@ -19,7 +19,7 @@ import { db, MEDIA_DIR } from '../src/lib/server/db.ts';
 
 const hard = process.argv.includes('--hard');
 
-const CACHE_TABLES = ['learnlog_entries', 'calendar_entries', 'news_entries', 'documents', 'media'];
+const CACHE_TABLES = ['learnlog_sync', 'learnlog_entries', 'calendar_entries', 'news_entries', 'documents', 'media'];
 
 db.exec('BEGIN');
 try {

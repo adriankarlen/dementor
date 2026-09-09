@@ -12,6 +12,13 @@
 // fetch re-stores whatever shape they now return.
 import { db } from './db.ts';
 import {
+	LEARNLOG_PAGE_SIZE,
+	parseLearnlogCursor,
+	type CachedLearnlogEntry,
+	type LearnlogPage
+} from '../learnlog.ts';
+export type { CachedLearnlogEntry } from '../learnlog.ts';
+import {
 	parseCalendarRow,
 	parseDocumentRow,
 	parseLearnlogRow,
@@ -92,14 +99,6 @@ export function getPupil(switchId: number): CachedPupil | null {
 
 // ---- Section entry caches ----
 
-export interface CachedLearnlogEntry {
-	pupilSwitchId: number;
-	entryId: number;
-	pupilName: string | null;
-	json: LearnlogEntry;
-	syncedAt: string;
-}
-
 export function upsertLearnlogEntries(pupilSwitchId: number, entries: LearnlogEntry[]): void {
 	if (entries.length === 0) return;
 	const stmt = db.prepare(`
@@ -153,6 +152,58 @@ export function listLearnlogEntries(): CachedLearnlogEntry[] {
 			json: JSON.parse(parsed.json) as LearnlogEntry
 		};
 	});
+}
+
+/** Stable keyset pagination: the same entry can belong to both pupils. */
+export function listLearnlogPage(cursorValue: string | null = null): LearnlogPage {
+	const cursor = parseLearnlogCursor(cursorValue);
+	const rows = db
+		.prepare(`
+		SELECT l.*, p.display_name AS pupil_name
+		FROM learnlog_entries l JOIN pupils p ON p.switch_id = l.pupil_switch_id
+		WHERE ? IS NULL OR l.entry_id < ? OR (l.entry_id = ? AND l.pupil_switch_id < ?)
+		ORDER BY l.entry_id DESC, l.pupil_switch_id DESC LIMIT ?
+	`)
+		.all(
+			cursor?.entryId ?? null,
+			cursor?.entryId ?? null,
+			cursor?.entryId ?? null,
+			cursor?.pupilSwitchId ?? null,
+			LEARNLOG_PAGE_SIZE + 1
+		);
+	const entries = rows.slice(0, LEARNLOG_PAGE_SIZE).map((row): CachedLearnlogEntry => {
+		const parsed = parseLearnlogRow(row);
+		// SAFETY: only upsertLearnlogEntries writes this JSON, from the typed API response.
+		return { ...parsed, json: JSON.parse(parsed.json) as LearnlogEntry };
+	});
+	const last = entries.at(-1);
+	const nextCursor =
+		rows.length > LEARNLOG_PAGE_SIZE && last ? `${last.entryId}:${last.pupilSwitchId}` : null;
+	const cachedMediaFileIds = entries
+		.flatMap((entry) => entry.json.media)
+		.filter((media) => (getCachedMedia(media.fileId)?.contentLength ?? 0) > 0)
+		.map((media) => media.fileId);
+	return { entries, nextCursor, cachedMediaFileIds };
+}
+
+/** Look up URLs in trusted cached JSON, never accept upstream URLs from the browser. */
+export function findLearnlogMedia(
+	fileId: number
+): { pupilSwitchId: number; entry: LearnlogEntry; media: LearnlogMedia } | null {
+	const row = db
+		.prepare(`
+		SELECT l.*, p.display_name AS pupil_name
+		FROM learnlog_entries l JOIN pupils p ON p.switch_id = l.pupil_switch_id,
+		json_each(l.json, '$.media') m
+		WHERE json_extract(m.value, '$.fileId') = ? LIMIT 1
+	`)
+		.get(fileId);
+	if (!row) return null;
+	const parsed = parseLearnlogRow(row);
+	// SAFETY: stored by upsertLearnlogEntries from InfoMentor's typed response.
+	const entry = JSON.parse(parsed.json) as LearnlogEntry;
+	const media = entry.media.find((item) => item.fileId === fileId);
+	return media ? { pupilSwitchId: parsed.pupilSwitchId, entry, media } : null;
 }
 
 /** Highest known entry id for one pupil. Returns null for a cold cache. */
@@ -442,7 +493,7 @@ export function listCachedMediaFileIds(): Set<number> {
 	// SELECT * matches the MediaRowSchema in sqliteRows.ts; if the
 	// schema ever drops a non-nullable column, the parser would
 	// throw on read here — that's the right place for it to surface.
-	const stmt = db.prepare('SELECT * FROM media');
+	const stmt = db.prepare('SELECT * FROM media WHERE content_length > 0');
 	const out = new Set<number>();
 	for (const row of stmt.all()) {
 		out.add(parseMediaRow(row).fileId);

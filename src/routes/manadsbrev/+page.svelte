@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import LearnlogEntryCard from '$lib/components/learnlog-entry-card.svelte';
 	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 	import ReauthPanel from '$lib/components/reauth-panel.svelte';
@@ -31,16 +32,8 @@
 		lightboxOpen = true;
 	}
 
-	/** Full-resolution src for the lightbox — same cached/fallback
-	 *  split as the card's thumbnail src, just resolving fileUrl
-	 *  instead of thumbnailUrl for the fallback case. */
-	function fullSrc(fileId: number, fallbackRelative: string): string {
-		if (cachedMedia.has(fileId)) return `/media/${fileId}`;
-		try {
-			return new URL(fallbackRelative, 'https://hub.infomentor.se/').href;
-		} catch {
-			return fallbackRelative;
-		}
+	function fullSrc(fileId: number): string {
+		return `/media/${fileId}`;
 	}
 </script>
 
@@ -76,7 +69,7 @@
 				</p>
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a
-						href="/larLogg"
+						href={resolve('/larLogg')}
 						class="rounded-md border-2 border-border bg-background px-3 py-1.5 text-sm font-semibold shadow-xs hover:translate-x-[-1px] hover:translate-y-[-1px] hover:shadow-sm"
 					>
 						Öppna hela Lärlogg

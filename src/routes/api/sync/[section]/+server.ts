@@ -18,11 +18,20 @@ import {
 	refreshPupils,
 	syncCalendar,
 	syncDocuments,
-	syncLearnlog,
 	syncNews
 } from '$lib/server/sync';
 
+import { learnlogJobStatus, startLearnlogJob } from '$lib/server/learnlog-jobs';
+
 const SESSION_COOKIE = 'session';
+
+export const GET: RequestHandler = ({ cookies, params }) => {
+	const token = cookies.get(SESSION_COOKIE);
+	const session = token ? getSession(token) : undefined;
+	if (!session) error(401, 'no session');
+	if (params.section !== 'learnlog') error(404, 'unknown sync job');
+	return json(learnlogJobStatus(session.cookieJar), { headers: { 'Cache-Control': 'no-store' } });
+};
 
 interface SyncSummary {
 	pupils?: number;
@@ -57,8 +66,16 @@ export const POST: RequestHandler = async ({ cookies, params }) => {
 				}));
 				break;
 			case 'learnlog':
-				summary = await syncLearnlog(session.cookieJar);
-				break;
+				return json(
+					startLearnlogJob(
+						session.cookieJar,
+						() => getSession(token)?.cookieJar === session.cookieJar
+					),
+					{
+						status: 202,
+						headers: { 'Cache-Control': 'no-store' }
+					}
+				);
 			case 'calendar':
 				// Refresh entry-type colours (small JSON, cheap) alongside
 				// the entries themselves so the chips on the rendered page

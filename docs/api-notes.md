@@ -68,7 +68,7 @@ Entry shape (fields actually used by the dashboard):
   "media": [
     {
       "fileId": 18737925,
-      "fileType": "Image", // "Video" expected too, unconfirmed in this capture
+      "fileType": "Image", // "Video" also confirmed in later synced data
       "fileExtension": "jpeg",
       "thumbnailUrl": "/Resources/Resource/Thumbnail/18737925?api=IM2&ModuleType=LearnLogMedia&ConnectionId=2260370&width=100&height=100",
       "fileUrl": "/Resources/Resource/Download/18737925?api=IM2&moduleType=LearnLogMedia&connectionId=2260370"
@@ -94,9 +94,20 @@ body — confirmed by opening the rewritten URL directly in a browser tab
 endpoint appears to only serve pre-generated sizes. The dashboard now
 uses each entry's `thumbnailUrl` exactly as returned, unmodified.
 
-`id` appears to be monotonically increasing with recency, so it's used
-for sort order and for detecting "already synced" entries instead of
-trying to parse the Swedish `lastModifiedOn` string.
+`id` is useful as a stable cache key, but **do not assume IDs strictly
+follow feed order**. The old sync check rejected history whenever the minimum
+ID increased from one page to the next. Live use hit that check at pages 13–14;
+those logs alone do not prove the pages were duplicates. Sync now checks
+actual ID membership for overlap and repeated ID sets for stalled pagination,
+not numeric comparisons. The local cache still uses IDs for stable display order.
+
+Video entries (`fileType: "Video"`, `.mov`) are confirmed in the cache. Their
+returned 100×100 thumbnail URLs can return **200 with a 1,190-byte HTML body**,
+not an image (reported across multiple files). A non-empty `thumbnailUrl` is
+therefore not proof of a usable video poster. Keep the URL unchanged and validate
+the response; when no image is supplied, the dashboard shows a local play
+placeholder without downloading the video. The precise reason for that upstream
+HTML response has not been established.
 
 ## Calendar
 
@@ -147,6 +158,6 @@ dashboard tracks "new" via locally cached IDs instead.
 ## Open questions
 
 - `learnLogType` values other than `0`.
-- Whether `fileType` ever comes back as `"Video"` (rendering path exists
-  in the dashboard, untested against a real video post).
+- Why the video thumbnail endpoint returns HTML for the reported `.mov` files,
+  and whether those videos have a usable poster through another confirmed endpoint.
 - Exact session/cookie lifetime before `SessionExpiredError` triggers.

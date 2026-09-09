@@ -1,86 +1,112 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import type { SyncStatus } from '$lib/sync-status';
 
-	/**
-	 * Tiny "cached data + refresh in background" wrapper. Pages drop
-	 * this in at the top of their body; it fires `fetch(url)` on
-	 * mount, tracks the in-flight state, and calls `invalidateAll()`
-	 * when the sync resolves so the page re-renders from the cache.
-	 *
-	 * Session expiry is signaled up via the `onsessionexpired`
-	 * callback so the parent can show a re-auth panel — the wrapper
-	 * itself just sets `expired = true` and stops.
-	 *
-	 * Props:
-	 *   url     — POST endpoint to fire (e.g. '/api/sync/learnlog')
-	 *   label   — visible text while syncing ("Hämtar senaste…")
-	 */
 	interface Props {
 		url: string;
 		label?: string;
 		onsessionexpired?: () => void;
+		onrefresh?: () => Promise<void>;
 	}
 
-	let { url, label = 'Hämtar senaste…', onsessionexpired }: Props = $props();
-
+	let {
+		url,
+		label = 'Hämtar senaste…',
+		onsessionexpired,
+		onrefresh = invalidateAll
+	}: Props = $props();
 	let refreshing = $state(true);
-	let errorDetail: string | null = $state(null);
-	let expired = $state(false);
+	let errorDetail = $state<string | null>(null);
+	let moreHistory = $state(false);
+	let historyPaused = $state(false);
+	let controller: AbortController | undefined;
 
 	async function sync() {
+		controller?.abort();
+		const current = new AbortController();
+		controller = current;
 		refreshing = true;
 		errorDetail = null;
-		expired = false;
+		moreHistory = false;
+		historyPaused = false;
+		let method = 'POST';
+		let revision: number | undefined;
 		try {
-			const res = await fetch(url, { method: 'POST' });
-			if (res.status === 401) {
-				// SAFETY: `res.json()` returns `Promise<any>`; the cast below
-				// narrows to the documented `{error: 'session_expired'}`
-				// shape returned by `/api/sync/[section]`.
-				const body = (await res.json().catch(() => null)) as { error?: string } | null;
-				if (body?.error === 'session_expired') {
-					expired = true;
+			for (;;) {
+				const response = await fetch(url, { method, signal: current.signal, cache: 'no-store' });
+				if (response.redirected) {
+					await goto(resolve('/login'));
+					return;
+				}
+				// SAFETY: our own sync endpoints return the shared SyncStatus contract.
+				const body = (await response.json()) as SyncStatus;
+				if (current.signal.aborted) return;
+				if (body.error === 'session_expired') {
 					onsessionexpired?.();
 					return;
 				}
+				if (!response.ok || !body.ok) {
+					errorDetail = body.detail ?? `HTTP ${response.status}`;
+					// Keep successful partial batches visible even after a later failure.
+					await onrefresh();
+					return;
+				}
+				if (!body.running || body.revision !== revision) {
+					await onrefresh();
+					revision = body.revision;
+				}
+				moreHistory = body.summary?.moreHistory ?? false;
+				historyPaused = body.summary?.historyPaused ?? false;
+				if (!body.running) return;
+				await new Promise((resolve) => setTimeout(resolve, 1500));
+				if (current.signal.aborted) return;
+				method = 'GET';
 			}
-			if (!res.ok) {
-				// SAFETY: `res.json()` returns `Promise<any>`; the cast below
-				// narrows to the documented `{detail?: string}` shape
-				// returned by `/api/sync/[section]` on generic errors.
-				const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-				errorDetail = body?.detail ?? `HTTP ${res.status}`;
-				return;
-			}
-			await invalidateAll();
 		} catch (err) {
-			errorDetail = err instanceof Error ? err.message : 'nätverksfel';
+			if (!current.signal.aborted) errorDetail = err instanceof Error ? err.message : 'nätverksfel';
 		} finally {
-			refreshing = false;
+			if (!current.signal.aborted) refreshing = false;
 		}
 	}
 
-	/** Public retry entry point — used after a successful re-auth. */
 	export function retry() {
 		return sync();
 	}
 
-	onMount(sync);
+	onMount(() => {
+		void sync();
+		return () => controller?.abort();
+	});
 </script>
 
 {#if refreshing}
 	<p
 		class="inline-flex items-center gap-2 rounded-md border-2 border-border bg-card px-3 py-1.5 text-sm text-muted-foreground shadow-xs"
 		role="status"
-		aria-live="polite"
 	>
-		<span class="inline-block size-2 animate-pulse rounded-full bg-amber-400"></span>
+		<span class="inline-block size-2 rounded-full bg-amber-400 motion-safe:animate-pulse"></span>
 		{label}
 	</p>
-{:else if errorDetail && !expired}
+{:else if errorDetail}
 	<p class="text-sm text-destructive" role="alert">
 		Synk misslyckades: {errorDetail}
-		<button class="ml-2 underline" onclick={() => sync()}>Försök igen</button>
+		<button class="ml-2 underline" onclick={sync}>Försök igen</button>
 	</p>
+{:else if moreHistory}
+	<div class="max-w-56 min-w-0 space-y-2 text-sm">
+		{#if historyPaused}
+			<p class="text-xs text-muted-foreground" role="status">
+				InfoMentor upprepade en sida. Hämtningen av äldre inlägg är pausad; hämtade inlägg finns
+				kvar.
+			</p>
+		{/if}
+		<button
+			class="rounded-md border-2 border-border bg-card px-3 py-1.5 text-sm shadow-xs"
+			onclick={sync}
+		>
+			Hämta äldre inlägg
+		</button>
+	</div>
 {/if}
