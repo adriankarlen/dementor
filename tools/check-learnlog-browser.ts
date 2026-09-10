@@ -66,6 +66,11 @@ let showActivities = false;
 const pdf = Buffer.from('%PDF-1.4\nsynthetic attachment\n%%EOF');
 const attachmentRequests: string[] = [];
 let upstreamDownloads = 0;
+// Split out so "must not fetch a full video"/"prefetch fetched the photos"
+// assertions stay meaningful once background photo prefetch (intentionally)
+// starts making full-image requests alongside explicit opens/attachments.
+let upstreamVideoDownloads = 0;
+let upstreamImageDownloads = 0;
 let historyDelay = 150;
 let selectedPupil = 111;
 let secondPupilDelay = 0;
@@ -75,6 +80,17 @@ let upstreamRequests = 0;
 const thumbnailRequests = new Map<number, number>();
 let repeatHistory = false;
 const repeatedBatch = Array.from({ length: 12 }, (_, i) => ({ ...entries[0], id: 1000 + i }));
+
+/** Poll a Node-side counter until a background prefetch batch settles, instead
+ *  of guessing a fixed sleep duration. */
+async function waitFor(predicate: () => boolean, description: string, timeoutMs = 5000): Promise<void> {
+	const start = Date.now();
+	while (!predicate()) {
+		if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for: ${description}`);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+}
+
 globalThis.fetch = async (input, init) => {
 	const url = new URL(input instanceof Request ? input.url : String(input));
 	if (url.hostname !== 'hub.infomentor.se') return realFetch(input, init);
@@ -112,6 +128,11 @@ globalThis.fetch = async (input, init) => {
 			return new Response(attachment.extension === 'pdf' ? pdf : Buffer.from('synthetic document'), { headers: { 'Content-Type': 'application/octet-stream' } });
 		}
 		const fileId = Number(url.pathname.split('/').at(-1));
+		// Every video fileId in this fixture set (base entries' n===0 slot, plus
+		// every special-cased id reusing that same slot below) is a multiple of
+		// 4; image fileIds never are. Background prefetch must only touch images.
+		if (fileId % 4 === 0) upstreamVideoDownloads++;
+		else upstreamImageDownloads++;
 		// 80000 intentionally stays invalid to exercise the decode fallback.
 		const bytes = fileId === 88884 ? incompatibleMov : fileId === 88888 || fileId === 88904 ? largeMov : fileId % 4 === 0 && fileId !== 80000 ? mov : png;
 		const range = parseRange(new Headers(init?.headers).get('range'), bytes.length);
@@ -161,11 +182,39 @@ try {
 	assert.equal((html.match(/<h2\b/g) ?? []).length, 4, 'SSR should contain just four cards');
 	assert.ok(!html.includes('<video'), 'SSR should not preload videos');
 	await page.waitForFunction(() => document.querySelector('h2')?.textContent?.includes('Test post 1'));
-	await page.waitForTimeout(1800);
+	// The cold cache renders a transient earlier page (pre-sync) before
+	// settling on entries 1-4, so this is a lower bound, not an exact count —
+	// see docs/learnlog-loading.md's incremental-publish behavior.
+	const initialPageImages = entries
+		.slice(0, 4)
+		.flatMap((entry) => entry.media)
+		.filter((m) => m.fileType === 'Image').length;
+	await waitFor(
+		() => upstreamImageDownloads >= initialPageImages,
+		"background prefetch of the first four posts' photos"
+	);
+	await page.waitForTimeout(200);
 	assert.equal(await page.locator('h2').count(), 4, 'sync should update the first page without rendering all rows');
 	assert.equal(await page.locator('video').count(), 0);
-	assert.ok(mediaRequests.every((url) => url.includes('thumbnail=1')));
-	assert.equal(upstreamDownloads, 0, 'scroll previews and sync must not fetch full files');
+	assert.ok(
+		mediaRequests.some((url) => !url.includes('thumbnail=1')),
+		'background prefetch should request full images, not just thumbnails'
+	);
+	assert.ok(
+		mediaRequests.every(
+			(url) => url.includes('thumbnail=1') || Number(new URL(url).pathname.split('/').pop()) % 4 !== 0
+		),
+		'background prefetch must never request full video bytes'
+	);
+	assert.equal(
+		upstreamVideoDownloads,
+		0,
+		'scroll previews, sync and background photo prefetch must not fetch full video files'
+	);
+	assert.ok(
+		upstreamImageDownloads >= initialPageImages,
+		"background prefetch should fetch at least the currently loaded posts' photos"
+	);
 	await page.waitForFunction(() => {
 		const thumbnails = [...document.querySelectorAll<HTMLImageElement>('section > ul > li:first-child img')];
 		return thumbnails.length === 4 && thumbnails.every((image) => image.complete && image.naturalWidth > 0);
@@ -180,7 +229,7 @@ try {
 		assert.match(await placeholder.text(), /Förhandsvisning saknas/);
 	}
 	assert.equal(thumbnailRequests.get(entries[0].media[0].fileId), 1, 'unavailable video posters must not be repeatedly downloaded');
-	assert.equal(upstreamDownloads, 0, 'a placeholder must not fetch a full video');
+	assert.equal(upstreamVideoDownloads, 0, 'a placeholder must not fetch a full video');
 	const missingPhoto = await context.request.get(`${base}/media/${entries[13].media[1].fileId}?thumbnail=1`);
 	assert.equal(missingPhoto.status(), 503, 'do not hide an unrelated photo failure behind a video placeholder');
 	await page.screenshot({ path: '/tmp/dementor-learnlog-desktop.png', fullPage: false });

@@ -6,19 +6,33 @@
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
 	import { createPupilColorClass } from '$lib/components/pupil-color';
 	import { createMediaSessionCheck, setMediaSession } from '$lib/media-session';
+	import { createMediaPrefetcher } from '$lib/media-prefetch';
 
 	let { data } = $props();
 
 	let reauthShow = $state(false);
 	let mediaRevision = $state(0);
+	const mediaSessionCheck = createMediaSessionCheck(() => {
+		lightboxOpen = false;
+		reauthShow = true;
+	});
 	setMediaSession({
-		check: createMediaSessionCheck(() => {
-			lightboxOpen = false;
-			reauthShow = true;
-		}),
+		check: mediaSessionCheck,
 		get revision() {
 			return mediaRevision;
 		}
+	});
+
+	// Same rationale as /larLogg: warm the full-image cache in the
+	// background for whatever's already loaded, instead of only on
+	// lightbox open. This page has no pagination of its own, so this
+	// runs once per `data.rows` change (e.g. after a resync).
+	const mediaPrefetcher = createMediaPrefetcher(() => void mediaSessionCheck());
+	$effect(() => {
+		mediaPrefetcher.queue(
+			data.rows.flatMap((row) => row.canonical.json.media),
+			cachedMedia
+		);
 	});
 	function onReauthed() {
 		mediaRevision++;

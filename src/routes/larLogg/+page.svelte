@@ -12,6 +12,7 @@
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
 	import { createPupilColorClass } from '$lib/components/pupil-color';
 	import { createMediaSessionCheck, setMediaSession } from '$lib/media-session';
+	import { createMediaPrefetcher } from '$lib/media-prefetch';
 
 	let { data } = $props();
 
@@ -99,14 +100,28 @@
 	let historyPaused = $state(false);
 	let reauthShow = $state(false);
 	let mediaRevision = $state(0);
+	const mediaSessionCheck = createMediaSessionCheck(() => {
+		lightboxOpen = false;
+		reauthShow = true;
+	});
 	setMediaSession({
-		check: createMediaSessionCheck(() => {
-			lightboxOpen = false;
-			reauthShow = true;
-		}),
+		check: mediaSessionCheck,
 		get revision() {
 			return mediaRevision;
 		}
+	});
+
+	// Background photo prefetch: fires for the initial SSR page and
+	// again for every page the infinite query / history sync adds
+	// below, so photos are already cached by the time a post is
+	// opened. See media-prefetch.ts for why videos are excluded and
+	// on-session-expiry reuses the same coalesced check as thumbnails.
+	const mediaPrefetcher = createMediaPrefetcher(() => void mediaSessionCheck());
+	$effect(() => {
+		mediaPrefetcher.queue(
+			entries.flatMap(({ entry }) => entry.json.media),
+			cachedMedia
+		);
 	});
 	function onReauthed() {
 		mediaRevision++;

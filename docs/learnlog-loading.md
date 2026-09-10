@@ -60,6 +60,21 @@
 
 ## Media
 
+- Once the currently loaded posts' thumbnails and text are visible, their
+  **photos** (not videos) are fetched in the background at low request
+  priority, so a first lightbox open is usually an instant local hit
+  instead of a fresh InfoMentor round trip. This runs for the initial SSR
+  page and again for every page the infinite query, history sync or a
+  résync adds, on both `/larLogg` and `/manadsbrev` (`media-prefetch.ts`).
+  Each fileId is requested at most once per page instance; already-cached
+  files (per `cachedMediaFileIds`) are skipped. A `401` response stops
+  further prefetching and reuses the same coalesced session check as
+  thumbnail/video load errors, surfacing the same re-login prompt.
+- Videos are deliberately excluded from this prefetch: a full body can be
+  up to 256 MiB and the player already streams it progressively via byte
+  ranges (below) — eagerly pulling whole videos in the background would
+  fight that design and waste bandwidth on videos nobody opens. Video
+  *thumbnails* still load the same lazy way as image thumbnails.
 - Feed and lightbox filmstrip tiles are **images**, never video elements.
   Only the selected item in an **open** lightbox can mount a video player.
   Closing it removes that player.
@@ -191,11 +206,16 @@ pnpm build
 ```
 
 For an existing Chrome installation, the browser test also accepts
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. Playwright's own bundled Chromium build
+lacks H.264 decoding, so point this at a real Chrome/Chromium install for the
+video-decode assertions to mean anything — otherwise every original H.264 MOV
+fails to decode and the test spends its 30 s timeout on the repair fallback
+instead, independent of anything this suite is meant to catch.
 
 The browser test covers four-card SSR, a cold cache with a deliberately slow
 second pupil, incremental rendering without GET polling, idle/scroll request
-bounds, real H.264 MOV decoding (including a 48 MiB media-data atom followed by
+bounds, background full-photo prefetch for loaded posts (never full videos),
+real H.264 MOV decoding (including a 48 MiB media-data atom followed by
 EOF metadata, loaded with bounded head/tail requests), automatic MP4 repair after
 an injected original playback failure (using a real ProRes/PCM fixture), media expiry and
 re-login prompting, video mounting/closing, unavailable-video placeholders/backoff,
