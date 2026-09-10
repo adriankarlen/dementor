@@ -1,17 +1,24 @@
 <script lang="ts">
+	import { getMediaSession } from '$lib/media-session';
 	let { fileId, video = false }: { fileId: number; video?: boolean } = $props();
-	let failed = $state(false);
+	const session = getMediaSession();
+	const key = $derived(`${fileId}:${session.revision}`);
+	let failedKey = $state<string | null>(null);
+	function onError() {
+		failedKey = key;
+		void session.check();
+	}
 </script>
 
 <div class="relative flex aspect-square h-full w-full items-center justify-center bg-muted">
-	{#if !failed}
+	{#if failedKey !== key}
 		<img
 			src={`/media/${fileId}?thumbnail=1`}
 			alt=""
 			loading="lazy"
 			decoding="async"
 			class="h-full w-full object-cover"
-			onerror={() => (failed = true)}
+			onerror={onError}
 		/>
 	{:else}
 		<span class="p-2 text-center text-xs text-muted-foreground">Förhandsvisning saknas</span>

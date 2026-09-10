@@ -5,7 +5,6 @@
 	// same as the ESLint config this replaced.
 	"ignorePatterns": [
 		"userscript/**",
-		"server/**",
 		"tools/**",
 		"docs/**",
 		".agent/**",
@@ -23,9 +22,6 @@
 	],
 	"jsPlugins": [{ "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }],
 	"rules": {
-		// src/lib/index.ts is SvelteKit's conventional (currently empty)
-		// library entrypoint, not dead code.
-		"unicorn/no-empty-file": "off",
 		"anti-slop/no-chained-type-assertions": "error",
 		"anti-slop/no-conditional-empty-object-spread": "error",
 		"anti-slop/no-known-value-widening": "error",

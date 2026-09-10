@@ -6,6 +6,8 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LearnlogEntry } from '../src/lib/server/infomentor/api.ts';
+import type { CachedLearnlogEntry } from '../src/lib/learnlog.ts';
+import { groupLearnlogEntries } from '../src/lib/learnlog-grouping.ts';
 
 const directory = await mkdtemp(join(tmpdir(), 'dementor-check-'));
 process.env.DATABASE_PATH = join(directory, 'cache.sqlite');
@@ -20,7 +22,8 @@ const { ensureMedia, localMediaPath, localThumbnailPath, thumbnailContentType } 
 const { InfoMentorSessionExpiredError } = await import('../src/lib/server/infomentor/errors.ts');
 const { createCookieJar } = await import('../src/lib/server/infomentor/cookieJar.ts');
 const { withInfoMentorSession } = await import('../src/lib/server/infomentor/queue.ts');
-const { startLearnlogJob } = await import('../src/lib/server/learnlog-jobs.ts');
+const { startLearnlogJob, streamLearnlogJob } = await import('../src/lib/server/learnlog-jobs.ts');
+const { readSync } = await import('../src/lib/read-sync.ts');
 const realFetch = globalThis.fetch;
 
 function entry(id: number): LearnlogEntry {
@@ -36,6 +39,7 @@ let selected = 111;
 let pages: { pupil: number; page: number; size: number }[] = [];
 let source = new Map<number, LearnlogEntry[]>();
 let failPage = 0;
+let beforePage: ((pupil: number) => Promise<void>) | undefined;
 let pageOverride: ((page: number, size: number) => LearnlogEntry[] | undefined) | undefined;
 let mediaRequests = 0;
 const mediaUrls: string[] = [];
@@ -55,7 +59,8 @@ globalThis.fetch = async (input) => {
 		const page = Number(url.searchParams.get('pageNumber'));
 		const size = Number(url.searchParams.get('pageSize'));
 		pages.push({ pupil: selected, page, size });
-		if (page === failPage && size === 25) throw new Error('simulated network failure');
+		await beforePage?.(selected);
+		if (page === failPage && size === 12) throw new Error('simulated network failure');
 		const all = source.get(selected) ?? [];
 		return Response.json(pageOverride?.(page, size) ?? all.slice((page - 1) * size, page * size));
 	}
@@ -93,6 +98,84 @@ try {
 	assert.throws(() => cache.listLearnlogPage('not-a-cursor'));
 	assert.throws(() => cache.listLearnlogPage('999999999999999999:1'));
 	console.log('OK: four-row keyset pages, ties, inserted posts, invalid cursors');
+
+	function activity(id: number, changes: Partial<LearnlogEntry> = {}): CachedLearnlogEntry {
+		return {
+			pupilSwitchId: 111, entryId: id, pupilName: 'First', syncedAt: '2026-09-09T18:00:00Z',
+			json: { ...entry(id), title: 'Skogen', text: '', lastModifiedOn: 'den 9 september 2026 klockan 17:34', ...changes }
+		};
+	}
+	const activityMedia = Array.from({ length: 11 }, (_, i) => ({
+		fileId: 7000 + i, fileType: i === 0 ? 'Video' : 'Image', fileExtension: i === 0 ? 'mov' : 'png',
+		thumbnailUrl: `/Resources/Resource/Thumbnail/${7000 + i}?width=100&height=100`,
+		fileUrl: `/Resources/Resource/Download/${7000 + i}`
+	}));
+	const activityParts = [
+		activity(40, { media: activityMedia.slice(0, 1) }),
+		activity(20, { title: '  SKOGEN ', text: '<p><br>&nbsp;&#160;&#xA0;</p>', lastModifiedOn: 'den 9 september 2026 klockan 17:32', media: activityMedia.slice(1, 5) }),
+		activity(10, { text: '<p>We explored the forest.</p>', lastModifiedOn: 'den 9 september 2026 klockan 17:29', media: activityMedia.slice(5) })
+	];
+	const originalParts = structuredClone(activityParts);
+	const grouped = groupLearnlogEntries(activityParts);
+	assert.equal(grouped.length, 1, 'caption, photos and video should form one activity');
+	assert.equal(grouped[0].sourceCount, 3);
+	assert.equal(grouped[0].entry.entryId, 40, 'keep the newest source identity and feed position');
+	assert.equal(grouped[0].entry.json.lastModifiedOn, activityParts[0].json.lastModifiedOn);
+	assert.equal(grouped[0].entry.json.text, activityParts[2].json.text, 'use the body even when the newest entry is empty');
+	assert.deepEqual(grouped[0].entry.json.media, activityMedia, 'keep every photo, video and original URL');
+	assert.deepEqual(activityParts, originalParts, 'grouping must not mutate cached or query data');
+	assert.deepEqual(groupLearnlogEntries([]), []);
+
+	for (const separate of [
+		activity(5, { title: 'Another activity' }),
+		activity(5, { groupName: 'Another group' }),
+		activity(5, { lastModifiedOn: 'den 10 september 2026 klockan 17:34' }),
+		activity(5, { lastModifiedOn: 'den 9 september 2025 klockan 17:34' }),
+		{ ...activity(5), pupilSwitchId: 222 }
+	]) {
+		assert.equal(groupLearnlogEntries([activityParts[0], separate]).length, 2, 'do not merge different activities, days, groups or pupils');
+	}
+	for (const changes of [
+		{ title: '' }, { title: '  ' }, { lastModifiedOn: '' }, { lastModifiedOn: 'Today' },
+		{ title: 'Månadsbrev september' },
+		{ attachments: [{ fileId: 7100, fileName: 'manadsbrev.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/7100' }] }
+	]) {
+		assert.equal(groupLearnlogEntries([activity(2, changes), activity(1, changes)]).length, 2, 'unknown keys and monthly letters stay separate');
+	}
+	assert.equal(groupLearnlogEntries([
+		activity(2, { title: 'Vår  utflykt' }), activity(1, { title: 'VA\u030aR utflykt' })
+	]).length, 1, 'normalize Swedish titles, case and whitespace');
+	assert.equal(groupLearnlogEntries([activity(2), activity(1)]).length, 1, 'media-only activities can be grouped');
+	const repeatedBody = groupLearnlogEntries([activityParts[2], activity(9, { text: `  ${activityParts[2].json.text}  ` })]);
+	assert.equal(repeatedBody.length, 1, 'repeat the same body only once');
+	for (const text of ['<p>A different outing.</p>', '<p><img src="/embedded-photo"></p>']) {
+		const conflicting = [...activityParts, activity(9, { text })];
+		assert.deepEqual(groupLearnlogEntries(conflicting).map((row) => row.entry), conflicting, 'conflicting bodies must leave all source posts separate');
+	}
+
+	const sharedAttachment = { fileId: 7200, fileName: 'Notes.pdf', fileType: 'Document', extension: 'pdf', downloadUrl: '/Resources/Resource/Download/7200?connectionId=40' };
+	const withDuplicates = groupLearnlogEntries([
+		activity(40, { media: activityMedia.slice(0, 2), attachments: [sharedAttachment] }),
+		activity(20, { media: activityMedia.slice(1, 3), attachments: [sharedAttachment, { ...sharedAttachment, fileId: 7201, downloadUrl: '/Resources/Resource/Download/7201?connectionId=20' }] })
+	]);
+	assert.deepEqual(withDuplicates[0].entry.json.media, activityMedia.slice(0, 3), 'shared file IDs only appear once');
+	assert.deepEqual(withDuplicates[0].entry.json.attachments?.map((file) => file.fileId), [7200, 7201], 'same filename with different IDs must keep both attachments');
+	assert.equal(withDuplicates[0].entry.json.attachments?.[0].downloadUrl, sharedAttachment.downloadUrl);
+
+	reset();
+	cache.upsertLearnlogEntries(111, [...activityParts.map((part) => part.json), entry(50), entry(30)]);
+	const activityPage1 = cache.listLearnlogPage();
+	const activityPage2 = cache.listLearnlogPage(activityPage1.nextCursor);
+	const beforeMore = groupLearnlogEntries(activityPage1.entries);
+	const afterMore = groupLearnlogEntries([...activityPage1.entries, ...activityPage2.entries]);
+	assert.deepEqual(beforeMore.map((row) => row.entry.entryId), [50, 40, 30]);
+	assert.deepEqual(afterMore.map((row) => row.entry.entryId), [50, 40, 30], 'later pages add to the same card without moving interleaved posts');
+	assert.equal(afterMore[1].sourceCount, 3);
+	assert.deepEqual(afterMore[1].entry.json.media, activityMedia);
+	assert.equal(afterMore[1].entry.json.text, activityParts[2].json.text);
+	assert.equal(cache.listLearnlogEntries().length, 5, 'keep all raw rows for cursors, syncing and media lookups');
+	assert.equal(cache.findLearnlogMedia(7010)?.entry.id, 10, 'merged media still resolves via its original source entry');
+	console.log('OK: related activity grouping, safe boundaries, conflicting bodies, unique files and cross-page merging');
 
 	reset();
 	const letter: LearnlogEntry = {
@@ -148,9 +231,21 @@ try {
 			firstPublished = true;
 		}
 	});
-	assert.deepEqual(pages.slice(0, 2).map((page) => page.size), [4, 4], 'both pupils get recent posts before backfill');
-	assert.equal(cold.newEntries, 63);
-	assert.equal(cold.moreHistory, false);
+	assert.deepEqual(pages.map((page) => page.size), [4, 4], 'navigation fetches only recent posts for each pupil');
+	assert.equal(cold.newEntries, 6);
+	assert.equal(cold.moreHistory, true);
+	assert.equal(cache.listLearnlogEntries().length, 6);
+	async function drainHistory(pupils: number[]) {
+		let summary = await syncLearnlog(jar, pupils);
+		for (let count = 0; summary.moreHistory && !summary.historyPaused; count++) {
+			assert.ok(count < 100, 'history must eventually finish');
+			const next = await syncLearnlog(jar, pupils, undefined, undefined, 'history');
+			summary = { ...next, newEntries: summary.newEntries + next.newEntries };
+		}
+		return summary;
+	}
+	await drainHistory([111, 222]);
+	assert.equal(cache.listLearnlogEntries().length, 63);
 	assert.equal(mediaRequests, 0, 'metadata sync must not download media');
 	pages = [];
 	const warm = await syncLearnlog(jar, [111, 222]);
@@ -158,53 +253,64 @@ try {
 	assert.equal(warm.pagesFetched, 2);
 	assert.ok(pages.every((page) => page.size === 4));
 	source.get(111)!.unshift(...[107, 106, 105, 104, 103, 102, 101].map(entry));
-	assert.equal((await syncLearnlog(jar, [111])).newEntries, 7);
+	assert.equal((await drainHistory([111])).newEntries, 7);
 	console.log('OK: progressive cold sync, correct counts, small no-change sync, catch-up');
 
 	reset();
 	source = new Map([[111, Array.from({ length: 260 }, (_, i) => entry(1000 - i))]]);
 	const capped = await syncLearnlog(jar, [111]);
 	assert.equal(capped.moreHistory, true);
-	assert.equal(cache.listLearnlogEntries().length, 200);
-	const resumed = await syncLearnlog(jar, [111]);
+	assert.equal(cache.listLearnlogEntries().length, 4, 'a cold visit must not scan history');
+	pages = [];
+	await syncLearnlog(jar, [111], undefined, undefined, 'history');
+	assert.deepEqual(pages.map(({ page, size }) => [page, size]), [[1, 4], [1, 12]]);
+	assert.equal(cache.listLearnlogEntries().length, 12, 'only two UI pages ahead');
+	pages = [];
+	await syncLearnlog(jar, [111], undefined, undefined, 'history');
+	assert.deepEqual(pages.map(({ page, size }) => [page, size]), [[1, 4], [1, 12], [2, 12]]);
+	assert.equal(cache.listLearnlogEntries().length, 24);
+	await syncLearnlog(jar, [111]);
+	assert.equal(cache.listLearnlogEntries().length, 24, 'revisiting must not resume history');
+	const resumed = await drainHistory([111]);
 	assert.equal(resumed.moreHistory, false);
-	assert.equal(cache.listLearnlogEntries().length, 260, 'cap must not strand older posts');
+	assert.equal(cache.listLearnlogEntries().length, 260, 'scrolling must not strand older posts');
 	reset();
 	source = new Map([[111, Array.from({ length: 70 }, (_, i) => entry(1000 - i))]]);
+	await syncLearnlog(jar, [111], undefined, undefined, 'history');
 	failPage = 2;
-	await assert.rejects(syncLearnlog(jar, [111]), /simulated network/);
-	assert.equal(cache.listLearnlogEntries().length, 25);
+	await assert.rejects(syncLearnlog(jar, [111], undefined, undefined, 'history'), /simulated network/);
+	assert.equal(cache.listLearnlogEntries().length, 12);
 	failPage = 0;
-	await syncLearnlog(jar, [111]);
+	await drainHistory([111]);
 	assert.equal(cache.listLearnlogEntries().length, 70, 'partial latest page must not advance the completed watermark');
 	console.log('OK: backfill cap and failure resume without gaps');
 
 	// Feed order is not numeric ID order. An older post can be moved to page 1.
 	reset();
 	source = new Map([[111, [entry(1), ...Array.from({ length: 59 }, (_, i) => entry(1000 - i))]]]);
-	const unordered = await syncLearnlog(jar, [111]);
+	const unordered = await drainHistory([111]);
 	assert.equal(unordered.newEntries, 60);
 	assert.equal(unordered.historyPaused, false);
 	assert.equal(unordered.moreHistory, false);
 	source.get(111)!.unshift(entry(2));
 	source.get(111)!.splice(10, 0, entry(3));
-	const lowIdPosts = await syncLearnlog(jar, [111]);
+	const lowIdPosts = await drainHistory([111]);
 	assert.equal(lowIdPosts.newEntries, 2, 'overlap must use known IDs, not a numeric high-water mark');
 	assert.ok(cache.listLearnlogEntries().some((row) => row.entryId === 3));
 
 	reset();
 	source = new Map([[111, Array.from({ length: 80 }, (_, i) => entry(1000 - i))]]);
-	pageOverride = (page, size) => page === 2 && size === 25 ? [...source.get(111)!.slice(0, 25)].reverse() : undefined;
-	const repeated = await syncLearnlog(jar, [111]);
+	pageOverride = (page, size) => page === 2 && size === 12 ? [...source.get(111)!.slice(0, 12)].reverse() : undefined;
+	const repeated = await drainHistory([111]);
 	assert.equal(repeated.moreHistory, true);
 	assert.equal(repeated.historyPaused, true, 'identical ID sets should pause even in a different order');
-	assert.equal(cache.listLearnlogEntries().length, 25);
+	assert.equal(cache.listLearnlogEntries().length, 12);
 	const pausedPosition = db.prepare('SELECT target_highest, completed_highest, next_page FROM learnlog_sync WHERE pupil_switch_id = 111').get()!;
 	assert.ok(pausedPosition.target_highest !== null);
 	assert.equal(pausedPosition.completed_highest, null, 'a repeat must not mark missing history complete');
 	assert.equal(pausedPosition.next_page, 2);
 	pageOverride = undefined;
-	const recovered = await syncLearnlog(jar, [111]);
+	const recovered = await drainHistory([111]);
 	assert.equal(recovered.historyPaused, false);
 	assert.equal(recovered.moreHistory, false);
 	assert.equal(cache.listLearnlogEntries().length, 80);
@@ -224,6 +330,43 @@ try {
 	while (job.running) await new Promise((resolve) => setTimeout(resolve, 1));
 	assert.equal(job.ok, true);
 	console.log('OK: pupil-session serialization and deduplicated background jobs');
+
+	reset();
+	source = new Map([[111, Array.from({ length: 100 }, (_, i) => entry(1000 - i))], [222, [entry(3)]]]);
+	let releaseSecond = () => {};
+	const secondReady = new Promise<void>((resolve) => { releaseSecond = resolve; });
+	beforePage = async (pupil) => { if (pupil === 222) await secondReady; };
+	const streamedJar = createCookieJar();
+	const response = streamLearnlogJob(streamedJar, () => true, 'latest');
+	const updates = readSync(response);
+	assert.equal((await updates.next()).value?.running, true);
+	const firstBatch = await updates.next();
+	assert.equal(firstBatch.value?.summary?.newEntries, 4);
+	assert.equal(firstBatch.value?.running, true);
+	assert.equal(cache.listLearnlogEntries().length, 4, 'committed first pupil is visible before the second response');
+	releaseSecond();
+	let terminal;
+	for await (const status of updates) terminal = status;
+	assert.equal(terminal?.running, false);
+	assert.equal(terminal?.summary?.moreHistory, true);
+	beforePage = undefined;
+
+	const cancelledJar = createCookieJar();
+	const cancelledStream = streamLearnlogJob(cancelledJar, () => true, 'history');
+	const beforeCancel = pages.length;
+	await cancelledStream.body!.cancel();
+	const cancelledJob = startLearnlogJob(cancelledJar, () => true);
+	while (cancelledJob.running) await new Promise((resolve) => setTimeout(resolve, 1));
+	assert.equal(pages.length, beforeCancel, 'disconnect before work starts must not fetch upstream');
+	const unfinished = new Response('{"ok":true,"running":true}\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+	await assert.rejects(async () => { for await (const _status of readSync(unfinished)) { /* consume */ } }, /avbröts/);
+	const finalLine = new TextEncoder().encode('{"ok":true,"running":false,"detail":"Hämtat"}\n');
+	const fragmented = new Response(new ReadableStream({ start(controller) {
+		for (const byte of finalLine) controller.enqueue(new Uint8Array([byte]));
+		controller.close();
+	} }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+	for await (const status of readSync(fragmented)) assert.equal(status.detail, 'Hämtat');
+	console.log('OK: incremental stream, cold first batch, bounded completion, disconnect and fragmented/truncated responses');
 
 	const path = join(directory, 'file.bin');
 	await writeFile(path, '0123456789');
@@ -303,7 +446,7 @@ try {
 	await assert.rejects(readFile(localThumbnailPath(9200)), /ENOENT/);
 	mediaContentType = 'application/octet-stream';
 	mediaBody = Buffer.from('<html><input name="login_ascx$txtNotandanafn"><input name="login_ascx$txtLykilord"></html>');
-	await assert.rejects(ensureMedia(jar, { ...media, fileId: 9201 }, 111, 1000, true), InfoMentorSessionExpiredError);
+	await assert.rejects(ensureMedia(createCookieJar(), { ...media, fileId: 9201 }, 111, 1000, true), InfoMentorSessionExpiredError);
 	await assert.rejects(readFile(localThumbnailPath(9201)), /ENOENT/);
 	console.log('OK: image bytes with generic/missing MIME; generic HTML versus genuine login');
 
@@ -327,6 +470,19 @@ try {
 	appDataStatus = 401;
 	await assert.rejects(ensureMedia(jar, { ...media, fileId: 9401 }, 111, 1000, true), InfoMentorSessionExpiredError);
 	console.log('OK: resource 401/403 checked against session, sync survives media errors, genuine expiry propagates');
+	const requestsAfterExpiry = mediaRequests;
+	await assert.rejects(ensureMedia(jar, { ...media, fileId: 9500 }, 111, 1000), InfoMentorSessionExpiredError);
+	assert.equal(mediaRequests, requestsAfterExpiry, 'expired jar must fail before making another media request');
+	const expiredJar = createCookieJar();
+	let tasksRun = 0;
+	const failedTasks = await Promise.allSettled(Array.from({ length: 8 }, () => withInfoMentorSession(expiredJar, async () => {
+		tasksRun++;
+		throw new InfoMentorSessionExpiredError();
+	})));
+	assert.equal(tasksRun, 1, 'queued work must stop after confirmed expiry');
+	assert.ok(failedTasks.every((task) => task.status === 'rejected' && task.reason instanceof InfoMentorSessionExpiredError));
+	assert.equal(await withInfoMentorSession(createCookieJar(), async () => 'fresh'), 'fresh', 'reauthentication uses an unblocked new jar');
+	console.log('OK: session-wide expiry circuit breaker and new-cookie recovery');
 } finally {
 	globalThis.fetch = realFetch;
 	db.close();

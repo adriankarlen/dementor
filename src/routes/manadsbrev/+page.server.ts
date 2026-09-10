@@ -4,19 +4,21 @@
 // endpoint but is the SAME parent-facing message for every pupil in
 // the household, regardless of which avdelning the kid is in — so in
 // the regular Lärlogg feed the same message appears multiple times
-// (once per pupil). This page collects those.
+// (once per pupil). This page collects those and shows one per
+// distinct message.
 //
-// Current placeholder heuristic:
+// Dedup heuristic:
 //   - Filter the Lärlogg cache by "månadsbrev" / "manadsbrev" in
 //     either the title or an attachment filename, ignoring case.
-//   - No cross-pupil dedup applied yet. The Lärlogg cache is keyed
-//     on (pupil_switch_id, entry_id), so without a shared
-//     "message group" key — which docs/api-notes.md does NOT
-//     document — the cleanest dedup can't be implemented without a
-//     network capture showing two duplicate Månadsbrev entries
-//     side-by-side. The seam is `dedupKey()` below; it returns
-//     `entry.id` today (per-pupil, no collapse) and is the single
-//     function to change when the real key is known.
+//   - Cross-pupil dedup is content-based, not ID-based: InfoMentor's
+//     per-pupil learnlog `id` (see docs/api-notes.md) is NOT shared
+//     across pupils, and no shared "message group" field is
+//     documented. But since the whole premise is that these posts
+//     are byte-identical copies sent to every pupil, `dedupKey()`
+//     below hashes (title, text, lastModifiedOn, sorted attachment
+//     filenames) instead of waiting on an undocumented shared id.
+//     Genuinely different posts that happen to share a title will
+//     still differ in `text` or `lastModifiedOn` and won't collapse.
 //
 // The data still comes from the existing Lärlogg cache; we reuse
 // `listLearnlogEntries()` rather than issuing a separate sync. New
@@ -32,43 +34,41 @@ import type { CachedLearnlogEntry } from '$lib/server/cache';
 import type { LearnlogEntry } from '$lib/server/infomentor/api';
 
 /**
- * Cross-pupil dedup seam. Returns a string that uniquely identifies
- * a single parent-facing Månadsbrev message across pupils.
+ * Cross-pupil dedup key. Returns a string that identifies a single
+ * parent-facing Månadsbrev message across pupils.
  *
- * TODAY: returns `entry.id` — this is InfoMentor's per-pupil
- * learnlog id (see docs/api-notes.md "id appears to be monotonically
- * increasing with recency"). It is NOT shared across pupils, so this
- * placeholder does NOT dedup. Two Månadsbrev entries posted to two
- * pupils will still both appear here, exactly like in the Lärlogg
- * feed.
- *
- * WHEN WE GET A NETWORK CAPTURE: replace the return value with the
- * real shared identifier (likely `subjectsCoursesDisplayString`, an
- * undocumented `parentLearnLogId`/`shareId`/`sharedGroupId` field,
- * or a hash of (title + lastModifiedOn-day-bucket + first-paragraph-
- * of-text)). The downstream code already keys on this string, so the
- * single-line change in this function is the entire fix — no other
- * file needs to know which key was picked.
+ * InfoMentor's per-pupil learnlog `id` is NOT shared across pupils,
+ * and no shared "message group" field is documented (see
+ * docs/api-notes.md). So instead of an id, this hashes the content
+ * that should be identical when the same letter was sent to every
+ * pupil: `title`, `text`, `lastModifiedOn`, and the sorted list of
+ * attachment filenames. `groupName` (the pupil's avdelning) is
+ * deliberately excluded — it differs per pupil even for the same
+ * letter. Two posts that happen to share a title but differ in body
+ * text or timestamp will NOT collapse, so this only merges posts
+ * that are actually identical, not merely similarly-named.
  */
 function dedupKey(entry: LearnlogEntry): string {
-	// Placeholder: per-pupil id, so no cross-pupil collapse. The
-	// entry param is used today (despite the placeholder being
-	// trivially wrong) so the call sites read naturally and a future
-	// edit can drop in a real shared key without touching them.
-	return entry.id.toString();
+	const attachmentNames = (entry.attachments ?? [])
+		.map((attachment) => attachment.fileName)
+		.sort()
+		.join('|');
+	return [entry.title.trim(), entry.text.trim(), entry.lastModifiedOn, attachmentNames].join(
+		'\u0000'
+	);
 }
 
 /**
  * Group cached entries by `dedupKey()` and reduce to one canonical
- * row per group. With the per-pupil placeholder key each group has
- * exactly one entry and `dupes` is always empty — the structure is
- * still in place so a future change to `dedupKey()` lights up
- * automatic cross-pupil collapsing without touching the page.
+ * row per group. Each group is one distinct Månadsbrev message;
+ * `dupes` holds the other pupils' copies of that same message so
+ * the page can show a "Visas X gånger" hint instead of a duplicate
+ * row.
  */
 export interface ManadsbrevRow {
 	canonical: CachedLearnlogEntry;
-	/** Other cached entries that shared this dedupKey (always empty
-	 *  today; populated once `dedupKey()` becomes truly shared). */
+	/** Other cached entries (from other pupils) that shared this
+	 *  dedupKey — i.e. the same letter, sent to more than one pupil. */
 	dupes: CachedLearnlogEntry[];
 }
 
@@ -77,8 +77,8 @@ export const load: PageServerLoad = () => {
 	const matching = all.filter((e) => isManadsbrev(e.json));
 
 	// Keep the highest-id entry per dedupKey() as the canonical row;
-	// the others become `dupes`. Today, with per-pupil ids as the
-	// key, every group has exactly one entry — see `dedupKey()` above.
+	// the others become `dupes` (the same letter posted to other
+	// pupils — see `dedupKey()` above for what "same" means here).
 	const groups = new Map<string, CachedLearnlogEntry[]>();
 	for (const entry of matching) {
 		const key = dedupKey(entry.json);

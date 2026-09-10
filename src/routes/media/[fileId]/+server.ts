@@ -11,6 +11,12 @@ import {
 	ThumbnailUnavailableError
 } from '$lib/server/media';
 import { fileResponse } from '$lib/server/file-response';
+import { videoRangeResponse } from '$lib/server/video-ranges';
+import {
+	cachedCompatibleVideo,
+	ensureCompatibleVideo,
+	VideoToolsUnavailableError
+} from '$lib/server/video-compatible';
 import { videoThumbnailPlaceholder } from '$lib/server/video-placeholder';
 import { getSession } from '$lib/server/infomentor/session';
 import { InfoMentorSessionExpiredError } from '$lib/server/infomentor/errors';
@@ -20,6 +26,54 @@ const serve: RequestHandler = async ({ params, locals, request, url, cookies }) 
 	const fileId = Number(params.fileId);
 	if (!Number.isSafeInteger(fileId) || fileId <= 0) error(400, 'invalid fileId');
 	const thumbnail = url.searchParams.get('thumbnail') === '1';
+	const compatible = url.searchParams.get('compatible') === '1';
+	if (!thumbnail && url.searchParams.get('playback') === '1') {
+		// Legacy selection URLs must not cache an original/MP4 representation.
+		// The player now resolves a stable URL before mounting <video>.
+		const variant = (await cachedCompatibleVideo(fileId)) ? 'compatible' : 'original';
+		return new Response(null, {
+			status: 307,
+			headers: { Location: `${url.pathname}?${variant}=1`, 'Cache-Control': 'private, no-store' }
+		});
+	}
+	if (!thumbnail && compatible) {
+		let repaired = await cachedCompatibleVideo(fileId);
+		if (!repaired && compatible) {
+			const source = findLearnlogMedia(fileId);
+			if (!source || source.media.fileType.toLowerCase() !== 'video') error(404, 'video not found');
+			if (request.method === 'HEAD')
+				return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+			const token = cookies.get('session');
+			const session = token ? getSession(token) : undefined;
+			if (!session) error(401, 'no session');
+			try {
+				repaired = await ensureCompatibleVideo(
+					session.cookieJar,
+					source.media,
+					source.pupilSwitchId,
+					source.entry.id,
+					() => !!token && getSession(token)?.cookieJar === session.cookieJar
+				);
+			} catch (err) {
+				const expired = err instanceof InfoMentorSessionExpiredError;
+				return json(
+					{
+						error: expired
+							? 'session_expired'
+							: err instanceof VideoToolsUnavailableError
+								? 'video_tools_unavailable'
+								: 'video_conversion_failed'
+					},
+					{ status: expired ? 401 : 503, headers: { 'Cache-Control': 'no-store' } }
+				);
+			}
+		}
+		if (repaired) {
+			const response = await fileResponse(repaired, 'video/mp4', request);
+			response.headers.set('Server-Timing', 'cache;desc="compatible-video"');
+			return response;
+		}
+	}
 	const row = getCachedMedia(fileId);
 	let path = thumbnail
 		? localThumbnailPath(fileId)
@@ -41,6 +95,20 @@ const serve: RequestHandler = async ({ params, locals, request, url, cookies }) 
 		const session = token ? getSession(token) : undefined;
 		if (!session) error(401, 'no session');
 		try {
+			if (
+				!thumbnail &&
+				source.media.fileType.toLowerCase() === 'video' &&
+				request.headers.has('range')
+			) {
+				return await videoRangeResponse(
+					session.cookieJar,
+					source.media,
+					source.pupilSwitchId,
+					source.entry.id,
+					request,
+					() => !!token && getSession(token)?.cookieJar === session.cookieJar
+				);
+			}
 			path = await ensureMedia(
 				session.cookieJar,
 				source.media,
@@ -72,7 +140,9 @@ const serve: RequestHandler = async ({ params, locals, request, url, cookies }) 
 	}
 	if (!path) error(404, 'media not found');
 	if (thumbnail) contentType = await thumbnailContentType(path);
-	return fileResponse(path, contentType, request);
+	const response = await fileResponse(path, contentType, request);
+	response.headers.set('Server-Timing', 'cache;desc="full-file"');
+	return response;
 };
 
 export const GET = serve;

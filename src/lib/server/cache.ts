@@ -87,17 +87,6 @@ export function listPupils(): CachedPupil[] {
 	return stmt.all().map(parsePupilRow);
 }
 
-export function getPupil(switchId: number): CachedPupil | null {
-	const stmt = db.prepare(
-		'SELECT switch_id, display_name, last_seen_at FROM pupils WHERE switch_id = ?'
-	);
-	// `stmt.get()` returns `Record<string, SQLOutputValue> | undefined`,
-	// matches `SqliteRow | undefined` directly. See listPupils() for
-	// the row-shape contract.
-	const row = stmt.get(switchId);
-	return row ? parsePupilRow(row) : null;
-}
-
 // ---- Section entry caches ----
 
 export function upsertLearnlogEntries(pupilSwitchId: number, entries: LearnlogEntry[]): void {

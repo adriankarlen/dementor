@@ -1,10 +1,13 @@
 # Implementation plan
 
-Working plan for building the self-hosted app decided in `AGENTS.md`
-("Decided architecture"). Phased so each step produces something
-runnable/testable rather than one big build. Update this file as phases
-complete or plans change — it's meant to stay accurate, not be a
-snapshot.
+Build history and remaining deployment work for the self-hosted app.
+`AGENTS.md` records the current architecture and repository layout.
+
+Phases 0–5 below describe the original implementation steps, not the
+current loading strategy. In particular, eager media downloads and the
+old Lärlogg sync loop have been replaced. See
+[`learnlog-loading.md`](learnlog-loading.md) for current behavior and
+tests. Phase 6 remains the deployment plan.
 
 ## Before Phase 0: one repo-layout decision
 
@@ -48,8 +51,6 @@ friction without security.
 The infrastructure still exists in git history if you want to revive
 it (`git log --diff-filter=D --name-only -- 'src/lib/server/auth/*'
 'tools/create-user.ts'`). For the current design, see Phase 2 below.
-
-## Phase 2 — InfoMentor login (no separate dashboard auth) ✅
 
 ## Phase 2 — InfoMentor login (no separate dashboard auth) ✅
 

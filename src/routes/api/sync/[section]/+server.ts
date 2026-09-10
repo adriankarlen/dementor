@@ -21,7 +21,7 @@ import {
 	syncNews
 } from '$lib/server/sync';
 
-import { learnlogJobStatus, startLearnlogJob } from '$lib/server/learnlog-jobs';
+import { learnlogJobStatus, streamLearnlogJob } from '$lib/server/learnlog-jobs';
 
 const SESSION_COOKIE = 'session';
 
@@ -41,7 +41,7 @@ interface SyncSummary {
 	items?: number;
 }
 
-export const POST: RequestHandler = async ({ cookies, params }) => {
+export const POST: RequestHandler = async ({ cookies, params, url }) => {
 	const token = cookies.get(SESSION_COOKIE);
 	if (!token) throw error(401, { message: 'no session' });
 
@@ -66,15 +66,10 @@ export const POST: RequestHandler = async ({ cookies, params }) => {
 				}));
 				break;
 			case 'learnlog':
-				return json(
-					startLearnlogJob(
-						session.cookieJar,
-						() => getSession(token)?.cookieJar === session.cookieJar
-					),
-					{
-						status: 202,
-						headers: { 'Cache-Control': 'no-store' }
-					}
+				return streamLearnlogJob(
+					session.cookieJar,
+					() => getSession(token)?.cookieJar === session.cookieJar,
+					url.searchParams.get('history') === '1' ? 'history' : 'latest'
 				);
 			case 'calendar':
 				// Refresh entry-type colours (small JSON, cheap) alongside

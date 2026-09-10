@@ -18,7 +18,8 @@
 	callback prop.
 
 	Props:
-	  entry         — one CachedLearnlogEntry from the cache layer
+	  entry         — one cached entry or a presentation-only merged activity
+	  sourceCount   — number of original posts in the activity; defaults to one
 	  cachedMedia   — Set<number> of file ids present on local disk
 	                  (Phase 4 cache). Used for the thumbnail / link
 	                  src split and the ● / ↗ badge in the corner.
@@ -26,6 +27,19 @@
 	                  Kept as a callback rather than a pupils array
 	                  so the card doesn't need to know about the
 	                  pupil table or its rendering conventions.
+	  pupilColorClass — switch_id → tailwind bg-* class resolver, same
+	                  callback shape as `pupilLabel`. Build it with
+	                  `createPupilColorClass()` from `pupil-color.ts`.
+	                  Optional; defaults to a single fixed color if
+	                  omitted.
+	  taggedPupilSwitchIds — optional list of every pupil this entry
+	                  applies to. Defaults to just `entry.pupilSwitchId`
+	                  (the plain per-pupil case used by `/larLogg`).
+	                  `/manadsbrev` passes the canonical entry's pupil
+	                  plus its deduped `dupes`' pupils, so a letter
+	                  sent to every pupil shows one pill per pupil, or
+	                  a single "Alla" pill once there are more than
+	                  three (see the render logic below).
 	  onOpenLightbox— called with (entryMedia, index) when the user
 	                  clicks an image or video tile. Document tiles
 	                  link out via <a target="_blank"> and never
@@ -38,16 +52,35 @@
 	import type { CachedLearnlogEntry } from '$lib/learnlog';
 	import MediaThumbnail from './media-thumbnail.svelte';
 	import { FileText, ArrowUpRight } from '@lucide/svelte';
+	import { ALL_PUPILS_PILL_CLASS } from './pupil-color';
 
 	interface Props {
 		entry: CachedLearnlogEntry;
+		sourceCount?: number;
 		cachedMedia: Set<number>;
 		pupilLabel: (switchId: number) => string;
+		pupilColorClass?: (switchId: number) => string;
+		taggedPupilSwitchIds?: number[];
 		onOpenLightbox: (entryMedia: LightboxMediaItem[], index: number) => void;
 	}
 
-	let { entry, cachedMedia, pupilLabel, onOpenLightbox }: Props = $props();
+	// Above this many tagged pupils, a single "Alla" pill replaces the
+	// per-pupil pills — with more than a couple of kids, spelling out
+	// every name stops being useful at a glance.
+	const ALL_PUPILS_THRESHOLD = 3;
+
+	let {
+		entry,
+		sourceCount = 1,
+		cachedMedia,
+		pupilLabel,
+		pupilColorClass = () => 'bg-amber-200',
+		taggedPupilSwitchIds,
+		onOpenLightbox
+	}: Props = $props();
 	const attachments = $derived(entry.json.attachments ?? []);
+	const pupilSwitchIds = $derived(taggedPupilSwitchIds ?? [entry.pupilSwitchId]);
+	const showAllPill = $derived(pupilSwitchIds.length > ALL_PUPILS_THRESHOLD);
 
 	function isVideo(fileType: string): boolean {
 		return isVideoKind(mediaKind(fileType));
@@ -56,17 +89,33 @@
 
 <li class="rounded-2xl border-2 border-border bg-card p-5 shadow-md">
 	<div class="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-		<span
-			class="rounded-md border-2 border-border bg-amber-200 px-2 py-0.5 font-semibold text-foreground"
-		>
-			{pupilLabel(entry.pupilSwitchId)}
-		</span>
+		{#if showAllPill}
+			<span
+				class="rounded-md border-2 border-border {ALL_PUPILS_PILL_CLASS} px-2 py-0.5 font-semibold text-foreground"
+				title={pupilSwitchIds.map(pupilLabel).join(', ')}
+			>
+				Alla
+			</span>
+		{:else}
+			{#each pupilSwitchIds as switchId (switchId)}
+				<span
+					class="rounded-md border-2 border-border {pupilColorClass(
+						switchId
+					)} px-2 py-0.5 font-semibold text-foreground"
+				>
+					{pupilLabel(switchId)}
+				</span>
+			{/each}
+		{/if}
 		{#if entry.json.groupName}
 			<span class="rounded-md border-2 border-border bg-card px-2 py-0.5 font-semibold">
 				{entry.json.groupName}
 			</span>
 		{/if}
 		<span>{entry.json.lastModifiedOn}</span>
+		{#if sourceCount > 1}
+			<span>{sourceCount} sammanslagna inlägg</span>
+		{/if}
 	</div>
 	<h2 class="mb-2 text-lg font-semibold">{entry.json.title}</h2>
 	<!--

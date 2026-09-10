@@ -2,77 +2,84 @@
 	import { onMount } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import type { SyncStatus } from '$lib/sync-status';
+	import { readSync } from '$lib/read-sync';
 
 	interface Props {
 		url: string;
 		label?: string;
 		onsessionexpired?: () => void;
 		onrefresh?: () => Promise<void>;
+		refreshing?: boolean;
+		moreHistory?: boolean;
+		historyPaused?: boolean;
+		historyAtEnd?: boolean;
 	}
 
 	let {
 		url,
 		label = 'Hämtar senaste…',
 		onsessionexpired,
-		onrefresh = invalidateAll
+		onrefresh = invalidateAll,
+		refreshing = $bindable(true),
+		moreHistory = $bindable(false),
+		historyPaused = $bindable(false),
+		historyAtEnd = false
 	}: Props = $props();
-	let refreshing = $state(true);
 	let errorDetail = $state<string | null>(null);
-	let moreHistory = $state(false);
-	let historyPaused = $state(false);
 	let controller: AbortController | undefined;
+	let lastHistory = false;
 
-	async function sync() {
+	async function sync(history = false) {
 		controller?.abort();
 		const current = new AbortController();
 		controller = current;
 		refreshing = true;
 		errorDetail = null;
-		moreHistory = false;
 		historyPaused = false;
-		let method = 'POST';
-		let revision: number | undefined;
+		lastHistory = history;
 		try {
-			for (;;) {
-				const response = await fetch(url, { method, signal: current.signal, cache: 'no-store' });
-				if (response.redirected) {
-					await goto(resolve('/login'));
-					return;
-				}
-				// SAFETY: our own sync endpoints return the shared SyncStatus contract.
-				const body = (await response.json()) as SyncStatus;
+			const response = await fetch(history ? `${url}?history=1` : url, {
+				method: 'POST',
+				signal: current.signal,
+				cache: 'no-store'
+			});
+			if (response.redirected) {
+				await goto(resolve('/login'));
+				return;
+			}
+			for await (const body of readSync(response)) {
 				if (current.signal.aborted) return;
+				// Read committed SQLite rows even if a later pupil/media call failed.
+				await onrefresh();
 				if (body.error === 'session_expired') {
 					onsessionexpired?.();
 					return;
 				}
 				if (!response.ok || !body.ok) {
 					errorDetail = body.detail ?? `HTTP ${response.status}`;
-					// Keep successful partial batches visible even after a later failure.
-					await onrefresh();
+					historyPaused = true;
 					return;
-				}
-				if (!body.running || body.revision !== revision) {
-					await onrefresh();
-					revision = body.revision;
 				}
 				moreHistory = body.summary?.moreHistory ?? false;
 				historyPaused = body.summary?.historyPaused ?? false;
 				if (!body.running) return;
-				await new Promise((resolve) => setTimeout(resolve, 1500));
-				if (current.signal.aborted) return;
-				method = 'GET';
 			}
 		} catch (err) {
-			if (!current.signal.aborted) errorDetail = err instanceof Error ? err.message : 'nätverksfel';
+			if (!current.signal.aborted) {
+				errorDetail = err instanceof Error ? err.message : 'nätverksfel';
+				historyPaused = true;
+			}
 		} finally {
 			if (!current.signal.aborted) refreshing = false;
 		}
 	}
 
 	export function retry() {
-		return sync();
+		return sync(lastHistory);
+	}
+
+	export function loadHistory() {
+		return sync(true);
 	}
 
 	onMount(() => {
@@ -92,9 +99,9 @@
 {:else if errorDetail}
 	<p class="text-sm text-destructive" role="alert">
 		Synk misslyckades: {errorDetail}
-		<button class="ml-2 underline" onclick={sync}>Försök igen</button>
+		<button class="ml-2 underline" onclick={retry}>Försök igen</button>
 	</p>
-{:else if moreHistory}
+{:else if moreHistory && !historyAtEnd}
 	<div class="max-w-56 min-w-0 space-y-2 text-sm">
 		{#if historyPaused}
 			<p class="text-xs text-muted-foreground" role="status">
@@ -104,7 +111,7 @@
 		{/if}
 		<button
 			class="rounded-md border-2 border-border bg-card px-3 py-1.5 text-sm shadow-xs"
-			onclick={sync}
+			onclick={loadHistory}
 		>
 			Hämta äldre inlägg
 		</button>

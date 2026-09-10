@@ -154,6 +154,13 @@ const MIGRATIONS: Migration[] = [
 		version: 4,
 		description: 'Lärlogg overlap detection independent of ID ordering',
 		statements: ['ALTER TABLE learnlog_sync ADD COLUMN known_ids TEXT;']
+	},
+	{
+		version: 5,
+		description: 'Bounded 12-post Lärlogg history pages',
+		// Old cursors used 25-post pages. Restart unfinished scans rather than
+		// interpreting those offsets at the new size and skipping history.
+		statements: ['UPDATE learnlog_sync SET next_page = 1 WHERE target_highest IS NOT NULL;']
 	}
 ];
 

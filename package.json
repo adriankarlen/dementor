@@ -10,12 +10,11 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test": "node tools/check-learnlog.ts",
+		"test": "node tools/check-learnlog.ts && node tools/check-video-ranges.ts && node tools/check-video-compatible.ts",
 		"test:browser": "node tools/check-learnlog-browser.ts",
 		"lint": "oxfmt --check && oxlint",
 		"lint:fix": "oxlint --fix",
 		"format": "oxfmt",
-		"create-user": "node tools/create-user.ts",
 		"clear:cache": "node tools/clear-cache.ts",
 		"clear:hard": "node tools/clear-cache.ts --hard"
 	},

@@ -5,10 +5,13 @@
 	import { onDestroy } from 'svelte';
 	import { createInfiniteQuery, QueryClient, type InfiniteData } from '@tanstack/svelte-query';
 	import type { LearnlogPage } from '$lib/learnlog';
+	import { groupLearnlogEntries } from '$lib/learnlog-grouping';
 	import LearnlogEntryCard from '$lib/components/learnlog-entry-card.svelte';
 	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 	import ReauthPanel from '$lib/components/reauth-panel.svelte';
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
+	import { createPupilColorClass } from '$lib/components/pupil-color';
+	import { createMediaSessionCheck, setMediaSession } from '$lib/media-session';
 
 	let { data } = $props();
 
@@ -42,20 +45,40 @@
 		}),
 		() => client
 	);
-	const entries = $derived(feed.data?.pages.flatMap((page) => page.entries) ?? []);
+	const entries = $derived(
+		groupLearnlogEntries(feed.data?.pages.flatMap((page) => page.entries) ?? [])
+	);
 
 	async function refreshFeed() {
 		await feed.refetch({ cancelRefetch: false });
 	}
-	function loadMore() {
-		if (!feed.isFetching && feed.hasNextPage) void feed.fetchNextPage();
+	async function loadMore() {
+		if (feed.isFetching || syncing || reauthShow) return;
+		if (feed.hasNextPage) await feed.fetchNextPage();
+		else if (moreHistory) {
+			await syncRef?.loadHistory();
+			if (feed.hasNextPage) await feed.fetchNextPage();
+		}
 	}
 	function observeMore(node: HTMLElement) {
 		// Reattach after a page arrives, so a still-visible sentinel can fill a tall viewport.
-		if (!feed.hasNextPage || feed.isFetching || feed.isError) return;
+		if (
+			(!feed.hasNextPage && !moreHistory) ||
+			feed.isFetching ||
+			syncing ||
+			feed.isError ||
+			historyPaused ||
+			reauthShow
+		)
+			return;
 		const observer = new IntersectionObserver(
 			([entry]) => {
-				if (entry.isIntersecting) loadMore();
+				// Grouping can keep the sentinel visible after many raw pages.
+				// Never chase the whole archive just to fill one short card.
+				if (entry.isIntersecting && automaticPagesLeft > 0) {
+					automaticPagesLeft--;
+					void loadMore();
+				}
 			},
 			{ rootMargin: '300px' }
 		);
@@ -63,8 +86,35 @@
 		return () => observer.disconnect();
 	}
 
+	let automaticPagesLeft = 2;
+	let previousScrollY = 0;
+	function onScroll() {
+		if (window.scrollY > previousScrollY + 100) {
+			automaticPagesLeft = 2;
+			previousScrollY = window.scrollY;
+		}
+	}
+	let syncing = $state(true);
+	let moreHistory = $state(false);
+	let historyPaused = $state(false);
 	let reauthShow = $state(false);
-	let syncRef = $state<{ retry: () => Promise<void> } | null>(null);
+	let mediaRevision = $state(0);
+	setMediaSession({
+		check: createMediaSessionCheck(() => {
+			lightboxOpen = false;
+			reauthShow = true;
+		}),
+		get revision() {
+			return mediaRevision;
+		}
+	});
+	function onReauthed() {
+		mediaRevision++;
+		void syncRef?.retry();
+	}
+	let syncRef = $state<{ retry: () => Promise<void>; loadHistory: () => Promise<void> } | null>(
+		null
+	);
 
 	let refreshingPupils = $state(false);
 	let pupilsResult: { ok: boolean; count: number | null; error: string | null } | null =
@@ -116,6 +166,10 @@
 		return pupil?.displayName ?? `Pupil ${switchId}`;
 	}
 
+	// One tailwind bg-* class per pupil, stable as long as the same
+	// set of pupils is known — see pupil-color.ts.
+	const pupilColorClass = $derived(createPupilColorClass(data.pupils));
+
 	// Phase 4: which media file-ids are served from local disk.
 	// Wrapped in a Set on the client so we get O(1) lookups inside the
 	// each-loop, which runs once per entry × per attachment.
@@ -145,6 +199,7 @@
 </script>
 
 <svelte:head><title>Lärlogg · dementor</title></svelte:head>
+<svelte:window onscroll={onScroll} />
 
 <section class="mx-auto max-w-2xl space-y-6 px-4 py-8 sm:px-8">
 	<header class="flex items-center justify-between gap-3">
@@ -152,12 +207,16 @@
 		<SyncIndicator
 			url="/api/sync/learnlog"
 			onrefresh={refreshFeed}
+			historyAtEnd
+			bind:refreshing={syncing}
+			bind:moreHistory
+			bind:historyPaused
 			onsessionexpired={() => (reauthShow = true)}
 			bind:this={syncRef}
 		/>
 	</header>
 
-	<ReauthPanel bind:show={reauthShow} onsuccess={() => syncRef?.retry()} />
+	<ReauthPanel bind:show={reauthShow} onsuccess={onReauthed} />
 
 	{#if entries.length === 0}
 		{#if data.pupils.length === 0}
@@ -204,8 +263,15 @@
 		{/if}
 	{:else}
 		<ul class="space-y-4">
-			{#each entries as entry (entry.pupilSwitchId + ':' + entry.entryId)}
-				<LearnlogEntryCard {entry} {cachedMedia} {pupilLabel} onOpenLightbox={openLightbox} />
+			{#each entries as { entry, sourceCount } (entry.pupilSwitchId + ':' + entry.entryId)}
+				<LearnlogEntryCard
+					{entry}
+					{sourceCount}
+					{cachedMedia}
+					{pupilLabel}
+					{pupilColorClass}
+					onOpenLightbox={openLightbox}
+				/>
 			{/each}
 		</ul>
 	{/if}
@@ -216,14 +282,19 @@
 			onclick={refreshFeed}>Försök igen</button
 		>
 	{/if}
-	{#if feed.hasNextPage}
+	{#if historyPaused && moreHistory}
+		<p class="text-sm text-muted-foreground">
+			Hämtningen av äldre inlägg är pausad. Hämtade inlägg finns kvar.
+		</p>
+	{/if}
+	{#if feed.hasNextPage || moreHistory}
 		<div {@attach observeMore} class="flex justify-center py-4">
 			<button
 				class="rounded-md border-2 border-border bg-card px-4 py-2 text-sm shadow-xs disabled:opacity-60"
-				disabled={feed.isFetching}
+				disabled={feed.isFetching || syncing || reauthShow}
 				onclick={loadMore}
 			>
-				{feed.isFetchingNextPage ? 'Hämtar fler…' : 'Visa fler inlägg'}
+				{feed.isFetchingNextPage || syncing ? 'Hämtar fler…' : 'Visa fler inlägg'}
 			</button>
 		</div>
 	{:else if entries.length > 0}

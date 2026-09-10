@@ -4,15 +4,43 @@
 	import MediaLightbox, { type LightboxMediaItem } from '$lib/components/media-lightbox.svelte';
 	import ReauthPanel from '$lib/components/reauth-panel.svelte';
 	import SyncIndicator from '$lib/components/sync-indicator.svelte';
+	import { createPupilColorClass } from '$lib/components/pupil-color';
+	import { createMediaSessionCheck, setMediaSession } from '$lib/media-session';
 
 	let { data } = $props();
 
 	let reauthShow = $state(false);
+	let mediaRevision = $state(0);
+	setMediaSession({
+		check: createMediaSessionCheck(() => {
+			lightboxOpen = false;
+			reauthShow = true;
+		}),
+		get revision() {
+			return mediaRevision;
+		}
+	});
+	function onReauthed() {
+		mediaRevision++;
+		void syncRef?.retry();
+	}
 	let syncRef = $state<{ retry: () => Promise<void> } | null>(null);
 
 	function pupilLabel(switchId: number): string {
 		const pupil = data.pupils.find((p) => p.switchId === switchId);
 		return pupil?.displayName ?? `Pupil ${switchId}`;
+	}
+
+	// One tailwind bg-* class per pupil, stable as long as the same
+	// set of pupils is known — see pupil-color.ts.
+	const pupilColorClass = $derived(createPupilColorClass(data.pupils));
+
+	// One pill per pupil this letter was posted to (canonical entry +
+	// its deduped `dupes`), deduplicated in case the same pupil ever
+	// ends up in both. `LearnlogEntryCard` collapses this into a
+	// single "Alla" pill once there are more than a few.
+	function taggedPupilSwitchIds(row: (typeof data.rows)[number]): number[] {
+		return [...new Set([row.canonical.pupilSwitchId, ...row.dupes.map((d) => d.pupilSwitchId)])];
 	}
 
 	// Phase 4: which media file-ids are served from local disk.
@@ -49,7 +77,7 @@
 		/>
 	</header>
 
-	<ReauthPanel bind:show={reauthShow} onsuccess={() => syncRef?.retry()} />
+	<ReauthPanel bind:show={reauthShow} onsuccess={onReauthed} />
 
 	{#if data.rows.length === 0}
 		{#if data.rawCount === 0}
@@ -79,13 +107,10 @@
 	{:else}
 		{#if data.rows.length < data.rawCount}
 			<!--
-				`rawCount` is the total matches before any
-				cross-pupil collapsing; `rows.length` is after. With
-				the per-pupil placeholder dedup key these should
-				always be equal, so this branch only fires once real
-				dedup lands — surfacing the "Vi gömde X dubletter"
-				signal at the top of the page so the user can see
-				when collapsing kicks in.
+				`rawCount` is the total matches before cross-pupil
+				collapsing; `rows.length` is after. They differ
+				whenever the same letter was posted to more than one
+				pupil — see `dedupKey()` in +page.server.ts.
 			-->
 			<p
 				class="rounded-md border-2 border-border bg-amber-100 px-4 py-2 text-xs text-foreground shadow-xs"
@@ -99,6 +124,8 @@
 					entry={row.canonical}
 					{cachedMedia}
 					{pupilLabel}
+					{pupilColorClass}
+					taggedPupilSwitchIds={taggedPupilSwitchIds(row)}
 					onOpenLightbox={openLightbox}
 				/>
 			{/each}

@@ -5,6 +5,9 @@ import { getLearnlogs, switchPupil, type LearnlogEntry } from './infomentor/api.
 import type { CookieJar } from './infomentor/cookieJar.ts';
 import { withInfoMentorSession } from './infomentor/queue.ts';
 
+export type LearnlogSyncMode = 'latest' | 'history';
+const HISTORY_PAGE_SIZE = 12;
+
 export interface LearnlogSyncSummary {
 	pupils: number;
 	newEntries: number;
@@ -52,16 +55,16 @@ function storeBatch(pupil: number, batch: LearnlogEntry[]): number {
 }
 
 /**
- * Publish four recent posts per pupil first, then fill the cache in larger
- * batches. Media is fetched separately, on demand. The persisted watermark
- * advances only when catch-up finishes, never after a partial first page.
- * A capped/failed run resumes at its saved page instead of losing older posts.
+ * Navigation fetches only four recent posts per pupil. History is explicit:
+ * one overlap page plus one new 12-post page per pupil, never an archive scan.
+ * Media is independent. Persist the baseline/cursor until catch-up completes.
  */
 export async function syncLearnlogMetadata(
 	jar: CookieJar,
 	pupils: number[],
 	onProgress: (summary: LearnlogSyncSummary) => void = () => {},
-	isActive: () => boolean = () => true
+	isActive: () => boolean = () => true,
+	mode: LearnlogSyncMode = 'latest'
 ): Promise<LearnlogSyncSummary> {
 	const summary: LearnlogSyncSummary = {
 		pupils: pupils.length,
@@ -111,15 +114,20 @@ export async function syncLearnlogMetadata(
 	for (const pupil of pupils) {
 		const state = position(pupil);
 		if (state.target_highest === null) continue;
+		if (mode === 'latest') {
+			summary.moreHistory = true;
+			continue;
+		}
 		// Re-read one overlap page on resume: upstream pagination is offset-based,
 		// so new posts may have shifted its boundaries while we were away.
 		let page = Math.max(1, state.next_page - 1);
 		const known = new Set(KnownIdsSchema.assert(JSON.parse(state.known_ids ?? '[]')));
 		const pageFingerprints = new Set<string>();
-		for (let count = 0; count < 8; count++, page++) {
+		for (let count = 0; count < (state.next_page > 1 ? 2 : 1); count++, page++) {
 			if (!isActive()) return summary;
-			const batch = await fetchPage(pupil, page, 25);
-			const complete = batch.length < 25 || batch.every((entry) => known.has(entry.id));
+			const batch = await fetchPage(pupil, page, HISTORY_PAGE_SIZE);
+			const complete =
+				batch.length < HISTORY_PAGE_SIZE || batch.every((entry) => known.has(entry.id));
 			if (complete) {
 				db.prepare(
 					'UPDATE learnlog_sync SET completed_highest = ?, target_highest = NULL, next_page = 1, known_ids = NULL WHERE pupil_switch_id = ?'

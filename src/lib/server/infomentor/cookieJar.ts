@@ -1,5 +1,4 @@
-// A minimal, dependency-free cookie jar. Ported from tools/lib/cookieJar.ts
-// (unchanged logic). Good enough for one InfoMentor session spanning
+// A minimal, dependency-free cookie jar for one InfoMentor session spanning
 // the two related domains (infomentor.se and hub.infomentor.se) — not
 // a full RFC 6265 implementation, but handles the two things that
 // matter here: the Domain attribute (so a cookie set for infomentor.se

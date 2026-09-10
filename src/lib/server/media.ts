@@ -3,15 +3,9 @@
 import { open, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MEDIA_DIR } from './db.ts';
-import { learnlogFiles } from '../learnlog.ts';
 import { createSession } from './infomentor/httpClient.ts';
 import type { CookieJar } from './infomentor/cookieJar.ts';
-import {
-	getCommunicationAppData,
-	switchPupil,
-	type LearnlogEntry,
-	type LearnlogMedia
-} from './infomentor/api.ts';
+import { getCommunicationAppData, switchPupil, type LearnlogMedia } from './infomentor/api.ts';
 import { isLoginPage, isRelayPage } from './infomentor/htmlForms.ts';
 import { InfoMentorSessionExpiredError } from './infomentor/errors.ts';
 import { withInfoMentorSession } from './infomentor/queue.ts';
@@ -21,7 +15,7 @@ import { EmptyDownloadError, saveDownload } from './download.ts';
 export class ThumbnailUnavailableError extends Error {}
 
 // Full videos are fetched on explicit open, streamed to disk, not buffered.
-const MAX_MEDIA_BYTES = 256 * 1024 * 1024;
+export const MAX_MEDIA_BYTES = 256 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES = 5 * 1024 * 1024;
 
 function sanitizeExtension(raw: string): string {
@@ -115,7 +109,7 @@ async function confirmMediaSession(jar: CookieJar): Promise<void> {
 	}
 }
 
-async function validateMediaBody(
+export async function validateMediaBody(
 	path: string,
 	thumbnail: boolean,
 	contentType: string
@@ -131,7 +125,10 @@ async function validateMediaBody(
 	} finally {
 		await file.close();
 	}
-	if (isLoginPage(text) || isRelayPage(text)) throw new InfoMentorSessionExpiredError();
+	// Only inspect HTML-looking prefixes as HTML. MOV/MP4 and other binary
+	// bodies are not text documents and must never go through form detection.
+	const html = /^\s*</.test(text);
+	if (html && (isLoginPage(text) || isRelayPage(text))) throw new InfoMentorSessionExpiredError();
 	if (thumbnail) {
 		// Serve our own MIME based on the signature, not InfoMentor's label.
 		// Invalid/HTML/JSON bodies still fail here before the atomic rename.
@@ -143,6 +140,48 @@ async function validateMediaBody(
 	) {
 		throw new Error('unexpected media response body');
 	}
+}
+
+/** Caller holds the per-jar queue until the response body is consumed/cancelled. */
+export async function requestMedia(
+	jar: CookieJar,
+	media: LearnlogMedia,
+	pupilSwitchId: number,
+	thumbnail = false,
+	range?: string,
+	signal?: AbortSignal
+): Promise<Response> {
+	signal?.throwIfAborted();
+	const relative = thumbnail ? media.thumbnailUrl : media.fileUrl;
+	if (!relative) {
+		if (thumbnail) throw new ThumbnailUnavailableError('no thumbnail available');
+		throw new Error('no media URL available');
+	}
+	const url = new URL(relative, 'https://hub.infomentor.se/');
+	if (url.origin !== 'https://hub.infomentor.se') throw new Error('invalid media origin');
+	try {
+		await switchPupil(jar, pupilSwitchId);
+	} catch (err) {
+		if (!(err instanceof InfoMentorSessionExpiredError)) throw err;
+		await confirmMediaSession(jar);
+		throw new Error('media pupil unavailable; session expiry not confirmed');
+	}
+	const headers = new Headers();
+	if (range) {
+		headers.set('Range', range);
+		headers.set('Accept-Encoding', 'identity');
+	}
+	const timeout = AbortSignal.timeout(120_000);
+	const response = await createSession(jar).request(url.href, {
+		headers,
+		signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+	});
+	if (response.status === 401 || response.status === 403) {
+		await response.body?.cancel();
+		await confirmMediaSession(jar);
+		throw new Error('media access denied; session expiry not confirmed');
+	}
+	return response;
 }
 
 // Deduplicate concurrent requests and back off on empty/failed upstream files.
@@ -186,32 +225,11 @@ export async function ensureMedia(
 		if (!isActive()) throw new InfoMentorSessionExpiredError();
 		// Another parent may have finished downloading while this request waited.
 		if ((await nonEmptySize(path)) > 0) return path;
-		const relative = thumbnail ? media.thumbnailUrl : media.fileUrl;
-		if (!relative) {
-			if (thumbnail) throw new ThumbnailUnavailableError('no thumbnail available');
-			throw new Error('no media URL available');
-		}
-		const url = new URL(relative, 'https://hub.infomentor.se/');
-		if (url.origin !== 'https://hub.infomentor.se') throw new Error('invalid media origin');
-		try {
-			await switchPupil(jar, pupilSwitchId);
-		} catch (err) {
-			if (!(err instanceof InfoMentorSessionExpiredError)) throw err;
-			await confirmMediaSession(jar);
-			throw new Error('media pupil unavailable; session expiry not confirmed');
-		}
 		// Keep the thumbnail URL exactly as supplied. Arbitrary sizes return empty 200s.
-		const response = await createSession(jar).request(url.href, {
-			signal: AbortSignal.timeout(120_000)
-		});
+		const response = await requestMedia(jar, media, pupilSwitchId, thumbnail);
 		const type = response.headers.get('content-type')?.toLowerCase() ?? '';
 		// Structural diagnostics only: no upstream URL, cookies or response body.
 		responseInfo = `${thumbnail ? 'thumbnail' : 'full'} HTTP ${response.status} content-type=${JSON.stringify(type.slice(0, 100) || 'missing')} content-length=${JSON.stringify(response.headers.get('content-length')?.slice(0, 30) ?? 'missing')}`;
-		if (response.status === 401 || response.status === 403) {
-			await response.body?.cancel();
-			await confirmMediaSession(jar);
-			throw new Error('media access denied; session expiry not confirmed');
-		}
 		const bytes = await saveDownload(
 			response,
 			path,
@@ -240,7 +258,10 @@ export async function ensureMedia(
 			});
 		}
 		// Missing video posters are an expected fallback, not a sync failure.
-		if (!(thumbnail && media.fileType.toLowerCase() === 'video' && unavailable)) {
+		if (
+			!(err instanceof InfoMentorSessionExpiredError) &&
+			!(thumbnail && media.fileType.toLowerCase() === 'video' && unavailable)
+		) {
 			console.warn(
 				`[dementor] media ${media.fileId}: ${responseInfo ? responseInfo + ' — ' : ''}${err instanceof Error ? err.message : 'download failed'}`
 			);
@@ -249,31 +270,4 @@ export async function ensureMedia(
 	} finally {
 		active.delete(key);
 	}
-}
-
-// Kept for manual cache-warming tools. Normal page sync does not call this.
-export async function cacheMediaForEntries(
-	jar: CookieJar,
-	cachedFileIds: Set<number>,
-	entries: { pupilSwitchId: number; entry: LearnlogEntry }[]
-): Promise<{ attempted: number; downloaded: number; cached: number; failed: number }> {
-	const totals = { attempted: 0, downloaded: 0, cached: 0, failed: 0 };
-	for (const { pupilSwitchId, entry } of entries) {
-		for (const media of learnlogFiles(entry)) {
-			if ((await nonEmptySize(localMediaPath(media.fileId, media.fileExtension))) > 0) {
-				totals.cached++;
-				continue;
-			}
-			totals.attempted++;
-			try {
-				await ensureMedia(jar, media, pupilSwitchId, entry.id);
-				cachedFileIds.add(media.fileId);
-				totals.downloaded++;
-			} catch (err) {
-				if (err instanceof InfoMentorSessionExpiredError) throw err;
-				totals.failed++;
-			}
-		}
-	}
-	return totals;
 }

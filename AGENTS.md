@@ -16,31 +16,27 @@ InfoMentor's own website — for two kids, on both desktop and phone.
 - Login was originally assumed to require BankID (Swedish e-ID), which
   makes any kind of unattended/background access hard (BankID needs a
   live phone approval). It turns out **username/password login also
-  works** for this account — this removes that obstacle entirely and is
-  why the project is now pivoting to a proper self-hosted app instead of
-  a browser-only trick.
+  works** for this account — this removed that obstacle and made the
+  self-hosted app possible without a live browser session.
 
 ## Current state
 
-Two things exist in this repo so far:
+1. **The self-hosted SvelteKit app** (`src/`) is the main implementation.
+   It logs into InfoMentor, caches section data in SQLite, and serves
+   desktop and phone views. Lärlogg publishes recent posts incrementally
+   and fetches older history only on demand. Media is cached on disk;
+   videos use byte ranges and can be repaired to MP4 after playback fails.
+   See `docs/learnlog-loading.md` for the current behavior and regression tests.
 
-1. **A working Tampermonkey userscript** (`userscript/*.user.js`) that runs
-   directly on hub.infomentor.se, riding on the browser's existing login
-   session, fetching InfoMentor's internal JSON endpoints and rendering
-   a custom dashboard (IndexedDB cache, neobrutalist UI). This works
-   today, but only in the one browser where you're already logged in —
-   no phone access, no background sync, and it stops working the moment
-   that browser's session expires.
+2. **The working Tampermonkey prototype** (`userscript/*.user.js`) is
+   retained as a reference and capture tool. It runs directly on
+   hub.infomentor.se using that browser's existing login session and an
+   IndexedDB cache; it is not the backend for the SvelteKit app.
 
-2. **An early start on a self-hosted server** (`server/`) — a
-   cookie-jar-based HTTP client with no framework, started before
-   agreeing on the approach. It's since been evaluated (see "Decided
-   architecture" below): `server/lib/cookieJar.js` and `httpClient.js`
-   are being kept and ported into the new SvelteKit server code
-   (translated to TS) as the basis for talking to InfoMentor — solid,
-   dependency-free, framework-agnostic groundwork. The rest of
-   `server/` predates the framework decision and will be rebuilt under
-   SvelteKit's own project structure.
+The HTTP/cookie helpers have been ported to TypeScript in
+`src/lib/server/infomentor/`. The app and manual tools share that
+implementation. The obsolete JavaScript copies under `server/` and the
+intermediate `tools/lib/` copies are no longer part of the source tree.
 
 Also in the repo:
 
@@ -54,15 +50,15 @@ Also in the repo:
 - `captures/` — gitignored; personal capture exports go here, never
   committed.
 
-## What's wanted next
+## Product requirements
 
-A self-hosted web app (not just a browser userscript) that:
+The self-hosted app must:
 
-- Logs into InfoMentor itself, using username/password — no BankID, no
+- Log into InfoMentor itself, using username/password — no BankID, no
   dependency on a live browser session.
-- Is usable from a phone as well as desktop (this is a hard requirement
+- Be usable from a phone as well as desktop (this is a hard requirement
   from the human, not a nice-to-have).
-- Presents Lärlogg posts, the calendar, and the newsletter in a nicer,
+- Present Lärlogg posts, the calendar, and the newsletter in a nicer,
   faster way than the real site, with photos/videos loading quickly.
 
 There is **no constraint against using normal dependencies** — an
@@ -155,24 +151,26 @@ Still open, deliberately deferred rather than decided:
   the flow relays **twice** — login lands back on `hub.infomentor.se`,
   but that page is itself another auto-submit relay (fresh `oauth_token`)
   back through `infomentor.se`, which finally lands authenticated on
-  `hub.infomentor.se/`. `tools/probe-login.ts` handles this generically
-  by looping on relay-page-detection rather than assuming a fixed hop
-  count, and confirms authentication by successfully calling
-  `communication/communication/appData` afterward. See that file for
-  the full flow notes and `tools/lib/` for the reusable HTTP/cookie/HTML
-  helpers (ported from `server/lib/`) it's built on.
+  `hub.infomentor.se/`. `src/lib/server/infomentor/login.ts` loops on
+  relay-page detection rather than assuming a fixed hop count, and
+  confirms authentication by successfully calling
+  `communication/communication/appData` afterward. `tools/probe-login.ts`
+  calls this same implementation for manual checks. The reusable
+  HTTP/cookie/HTML helpers live alongside `login.ts`.
 
 ## Repo layout
 
 ```
-userscript/*.user.js  Working browser userscript (capture tool + dashboard)
-docs/api-notes.md     Confirmed InfoMentor API reference
-tools/shape.js        Capture analysis helper (structure only, no personal data)
-captures/             Gitignored — personal capture exports
-server/               Early backend start; lib/ (cookie jar, http client) is being
-                      ported into the new SvelteKit app, rest will be rebuilt there
-tools/probe-login.ts  Standalone script confirming the InfoMentor login flow;
-                      run locally with real credentials, see file header
-tools/lib/            Ported cookie jar / http client / HTML-scraping helpers
-                      used by tools/probe-login.ts (and, later, the app itself)
+src/routes/                 SvelteKit pages and authenticated API/media routes
+src/lib/server/             SQLite cache, section sync, media and video handling
+src/lib/server/infomentor/   Shared login, HTTP, cookie and session helpers
+userscript/*.user.js        Browser prototype and capture tool
+docs/api-notes.md           Confirmed InfoMentor API reference
+docs/learnlog-loading.md    Current loading/media behavior and regression tests
+tools/probe-login.ts        Manual login check using the app implementation
+tools/check-*.ts            Backend and browser regression checks
+tools/fixtures/             Synthetic test media
+tools/shape.js              Capture analysis helper (structure only)
+captures/                   Personal capture exports (gitignored)
+data/                       Rebuildable SQLite and media cache (gitignored)
 ```

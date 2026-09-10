@@ -20,16 +20,21 @@ import {
 	upsertPupil
 } from './cache.ts';
 import { withInfoMentorSession } from './infomentor/queue.ts';
-import { syncLearnlogMetadata, type LearnlogSyncSummary } from './learnlog-sync.ts';
+import {
+	syncLearnlogMetadata,
+	type LearnlogSyncSummary,
+	type LearnlogSyncMode
+} from './learnlog-sync.ts';
 
 export async function syncLearnlog(
 	jar: CookieJar,
 	pupilSwitchIds?: number[],
 	onProgress?: (summary: LearnlogSyncSummary) => void,
-	isActive?: () => boolean
+	isActive?: () => boolean,
+	mode: LearnlogSyncMode = 'latest'
 ): Promise<LearnlogSyncSummary> {
 	const ids = await resolvePupilIds(jar, pupilSwitchIds);
-	return syncLearnlogMetadata(jar, ids, onProgress, isActive);
+	return syncLearnlogMetadata(jar, ids, onProgress, isActive, mode);
 }
 
 export async function syncCalendar(
@@ -93,15 +98,4 @@ export async function refreshCalendarEntryTypes(jar: CookieJar): Promise<void> {
 			setCachedCalendarEntryTypes([]);
 		}
 	});
-}
-
-export async function syncAll(jar: CookieJar) {
-	await refreshPupils(jar);
-	await refreshCalendarEntryTypes(jar);
-	const pupils = listPupils().map((pupil) => pupil.switchId);
-	const learnlog = await syncLearnlog(jar, pupils);
-	const calendar = await syncCalendar(jar, pupils);
-	const news = await syncNews(jar);
-	const documents = await syncDocuments(jar);
-	return { pupils: pupils.length, learnlog, calendar, news, documents };
 }

@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { isVideoKind, mediaKind } from './media-kind.ts';
 	import MediaThumbnail from './media-thumbnail.svelte';
+	import MediaVideo from './media-video.svelte';
+	import { getMediaSession } from '$lib/media-session';
+	const session = getMediaSession();
 
 	/**
 	 * Full-screen photo/video lightbox with carousel navigation for
@@ -178,18 +181,9 @@
 					</button>
 				{/if}
 
-				{#key carouselCurrent.fileId}
+				{#key `${carouselCurrent.fileId}:${session.revision}`}
 					{#if isVideoKind(mediaKind(carouselCurrent.fileType))}
-						<!-- svelte-ignore a11y_media_has_caption -->
-						<!-- InfoMentor's Lärlogg videos are short parent-recorded
-					     clips with no caption track available from the source
-					     — nothing to point a <track> at. -->
-						<video
-							src={resolveSrc(carouselCurrent.fileId, carouselCurrent.fileUrl)}
-							controls
-							playsinline
-							class="max-h-full max-w-full rounded-md"
-						></video>
+						<MediaVideo fileId={carouselCurrent.fileId} />
 					{:else}
 						<img
 							src={resolveSrc(carouselCurrent.fileId, carouselCurrent.fileUrl)}

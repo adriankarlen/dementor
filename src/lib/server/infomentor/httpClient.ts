@@ -1,6 +1,5 @@
 // A small fetch wrapper that manually follows redirects, one hop at a
-// time, applying the cookie jar at every hop. Ported from
-// tools/lib/httpClient.ts (unchanged logic).
+// time, applying the InfoMentor cookie jar at every hop.
 //
 // Why not just use fetch's built-in redirect following? Because when
 // fetch follows a redirect internally, it never gives your code access
@@ -48,16 +47,10 @@ export function createSession(initialJar?: CookieJar): Session {
 		let hops = 0;
 
 		for (;;) {
-			const headers = new Headers({
-				...DEFAULT_HEADERS,
-				// SAFETY: `currentInit.headers` either matches the
-				// HeadersInit shape SvelteKit/Node give us
-				// (Record<string,string>, [string,string][], or
-				// Headers) or is undefined — the spread tolerates
-				// all three because Object.assign only runs the
-				// spread path on plain records.
-				...(currentInit.headers as Record<string, string> | undefined)
-			});
+			const headers = new Headers(DEFAULT_HEADERS);
+			// Object spread silently drops Headers instances and mangles tuples.
+			// Preserve Range and every other valid HeadersInit representation.
+			new Headers(currentInit.headers).forEach((value, name) => headers.set(name, value));
 			const cookieHeader = jar.cookieHeaderFor(currentUrl);
 			if (cookieHeader) headers.set('Cookie', cookieHeader);
 

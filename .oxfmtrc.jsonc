@@ -14,7 +14,6 @@
 	// same as the previous .prettierignore.
 	"ignorePatterns": [
 		"userscript/**",
-		"server/**",
 		"tools/**",
 		"docs/**",
 		"AGENTS.md",
